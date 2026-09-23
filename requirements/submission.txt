@@ -1,0 +1,2 @@
+# Baseline inference uses only the packages preinstalled in evaluation.md.
+# Add only genuinely new inference dependencies after offline validation.

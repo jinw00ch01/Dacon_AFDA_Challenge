@@ -1,0 +1,22 @@
+colorama==0.4.6
+filelock==4.0.1
+fsspec==2026.9.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+mpmath==1.3.0
+networkx==3.7
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+pandas==2.2.2
+pillow==10.4.0
+psutil==6.1.1
+python-dateutil==2.9.0.post0
+pytz==2026.3.post1
+setuptools==84.0.0
+six==1.17.0
+sympy==1.14.0
+torch @ https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-win_amd64.whl#sha256=0ad925202387f4e7314302a1b4f8860fa824357f9b1466d7992bf276370ebcff
+torchvision @ https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-win_amd64.whl#sha256=20fa9c7362a006776630b00b8a01919fedcf504a202b81358d32c5aef39956fe
+tqdm==4.66.5
+typing_extensions==4.16.0
+tzdata==2026.4

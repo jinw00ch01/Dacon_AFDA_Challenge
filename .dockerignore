@@ -1,0 +1,7 @@
+**
+!environment/
+!environment/**
+!harness/
+!harness/*.py
+!requirements/
+!requirements/local-common.txt

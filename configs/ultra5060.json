@@ -1,0 +1,13 @@
+{
+  "role": "ultra5060",
+  "expected_host": null,
+  "device": "cuda",
+  "workers": 0,
+  "torch_threads": 4,
+  "batch_size": 1,
+  "ram_budget_gib": 16,
+  "cache_budget_gib": 80,
+  "min_free_disk_gib": 40,
+  "allow_training": true,
+  "seed": 20260923
+}

@@ -1,0 +1,13 @@
+{
+  "role": "pro360",
+  "expected_host": null,
+  "device": "cpu",
+  "workers": 0,
+  "torch_threads": 4,
+  "batch_size": 1,
+  "ram_budget_gib": 6,
+  "cache_budget_gib": 20,
+  "min_free_disk_gib": 20,
+  "allow_training": false,
+  "seed": 20260923
+}

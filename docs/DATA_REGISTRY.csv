@@ -1,0 +1,5 @@
+dataset_id,source_url,license_or_permission,acquired_date,stage,origin_group,label_version,timebase_status,split,sha256_manifest,notes
+public_baseline,provided_local,confirm_competition_terms,2026-09-23,all,source_pair_or_drive,provided,stage3_unresolved,smoke_only,runs_inventory_dataset_manifest,not_a_benchmark
+comma2k19_pilot,https://github.com/commaai/comma2k19,MIT_official_dataset_card,2026-09-23,stage3,original_route_id,continuous_auxiliary_v1,boot_time_aligned_10hz,pilot_only,data/external/pilot_manifest.json,1200_frames_599_rows_one_drive_not_official_class_GT
+dota_annotations,https://github.com/MoonBlvd/Detection-of-Traffic-Anomaly,MIT_repo_video_terms_pending,2026-09-23,stage2,original_video_id,author_anomaly_not_collision,source_10hz_frames,unassigned,data/external/pilot_manifest.json,annotations_only_2682_review_candidates_no_video
+ccd_docs,https://github.com/Cogito2012/CarCrashDataset,video_terms_pending,2026-09-23,stage2,original_video_id,none,unverified,unassigned,data/external/pilot_manifest.json,docs_only_no_training_videos
