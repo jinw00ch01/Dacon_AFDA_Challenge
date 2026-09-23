@@ -313,11 +313,12 @@ def bundle(args, config, run):
 
 
 def verify_handoff(args, config, run):
-    manifest = json.loads((ROOT / "handoff_manifest.json").read_text(encoding="utf-8"))
+    root = ROOT.resolve()
+    manifest = json.loads((root / "handoff_manifest.json").read_text(encoding="utf-8"))
     errors = []
     for name, digest in manifest.items():
-        path = (ROOT / name).resolve()
-        if not path.is_relative_to(ROOT) or not path.is_file() or sha(path) != digest:
+        path = (root / name).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or sha(path) != digest:
             errors.append(name)
     if errors:
         raise ValueError(f"Handoff mismatch: {errors}")

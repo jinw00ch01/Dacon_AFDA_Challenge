@@ -166,6 +166,16 @@ class HandoffTests(unittest.TestCase):
             with patch("harness.__main__.ROOT", root), self.assertRaises(ValueError):
                 verify_handoff(None, None, None)
 
+    def test_handoff_normalizes_root_before_containment_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'nested').mkdir()
+            file = root / 'example.txt'
+            file.write_text('original')
+            (root / 'handoff_manifest.json').write_text(json.dumps({'example.txt': sha(file)}))
+            with patch('harness.__main__.ROOT', root / 'nested' / '..'):
+                self.assertEqual(verify_handoff(None, None, None)['verified_files'], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

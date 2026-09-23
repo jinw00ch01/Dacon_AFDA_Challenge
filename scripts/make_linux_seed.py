@@ -48,7 +48,7 @@ poweroff
                          {'path':'/opt/afda/run-checks.sh','permissions':'0755','content':script}],
           'runcmd':[['bash','/opt/afda/run-checks.sh']]}
     iso=pycdlib.PyCdlib()
-    iso.new(interchange_level=3,joliet=3,rock_ridge='1.09',vol_ident='cidata')
+    iso.new(interchange_level=3,joliet=3,rock_ridge='1.09',vol_ident='CIDATA')
     for name, content in [('user-data','#cloud-config\n'+json.dumps(data)),('meta-data','instance-id: afda-contracts-v1\nlocal-hostname: afda-linux-cpu\n')]:
         raw=content.encode()
         iso.add_fp(io.BytesIO(raw),len(raw),iso_path='/'+name.upper().replace('-','_')+';1',rr_name=name,joliet_path='/'+name)

@@ -16,6 +16,18 @@ Ubuntu 이미지는 [Canonical 배포](https://cloud-images.ubuntu.com/minimal/r
 Windows 폴더 공유나 외부 수신 포트는 열지 않는다. 결과를 serial 로그에 남긴 후 guest를 종료한다.
 이 CPU VM에는 CUDA가 없고, 평가서버 설치 패키지 전체를 재현하지 않는다.
 
+재현 명령(PowerShell, 프로젝트 루트):
+
+```powershell
+.\.venv-ultra5060\Scripts\python.exe -m harness execute --profile ultra5060 --kind cpu --timeout 1800 -- .\.venv-ultra5060\Scripts\python.exe scripts/prepare_linux_assets.py
+.\.venv-ultra5060\Scripts\python.exe -m pip install --target work/vm-tools pycdlib==1.14.0
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/linux_cpu_check.ps1
+```
+
+자산은 `work/linux/`에 보관하며 디스크는 매 실행 새로운 sparse overlay를 만든다.
+QEMU는2개 가상 CPU/2GiB RAM으로 실행하고 하네스가30분 타임아웃을 적용한다.
+원본 Ubuntu 이미지는 변경하지 않는다. 다운로드 약470MB, QEMU 해제 크기 약1.3GB다.
+
 ## 실제 모델용 Linux CUDA 경로
 
 Dockerfile과 `run_offline.py`를 준비했다. Python3.12 계열 Ubuntu24.04 + torch2.8.0/cu128 + torchvision0.23.0,
