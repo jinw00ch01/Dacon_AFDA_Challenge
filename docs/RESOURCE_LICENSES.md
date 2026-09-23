@@ -15,6 +15,17 @@
 
 ## 사전학습 후보
 
+**우선 확보 후보: DINOv2 ViT-S/14 (일반 이미지 backbone).**
+[Meta 공식 저장소](https://github.com/facebookresearch/dinov2#license)와
+[MODEL_CARD](https://github.com/facebookresearch/dinov2/blob/main/MODEL_CARD.md)가 코드와 가중치의 Apache2.0을 명시한다.
+공식 ViT-S/14 가중치88,283,115바이트를 다운로드하고 `weights_only=True` 역직렬화를 확인했다.
+README/LICENSE/MODEL_CARD와 전체 SHA-256을 보관했으며 `docs/MODEL_REGISTRY.json`에 공개 출처 장부를 저장했다.
+Apache2.0의 라이선스·저작권 고지 유지, 변경 사항 표시 및 해당되는 NOTICE 보존 조건을 따른다.
+XRay-DINO/Cell-DINO 등 별도 조건의 다른 모델로 이 허가를 확대하지 않는다.
+학습 데이터는 LVD-142M이며 모델 가중치 사용 허가가 원 학습 영상/이미지의 재배포 권한을 뜻하지 않는다.
+S1/S2/S3 프레임 특징을 고정 추출하고 작은 시계열 head를 학습하는 비교 후보로 선정했다.
+아직 모델 구조의 로컬 패키징·영상 forward·대회용 미세조정은 하지 않았다. 서명된 배포자 weight 해시 검증이 아니라 HTTPS 수집+관측 SHA 기록이다.
+
 Torchvision0.23.0의 고정 enum을 기록하며 변동 가능한 DEFAULT를 사용하지 않는다.
 [공식 안내](https://docs.pytorch.org/vision/stable/models.html)는 가중치에 학습 데이터 유래 별도 조건이 있을 수 있다고 명시한다.
 [코드 BSD-3-Clause](https://github.com/pytorch/vision/blob/v0.23.0/LICENSE)를 모든 가중치 허가로 확대하지 않는다.

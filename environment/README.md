@@ -2,6 +2,15 @@
 
 실행 범위를 구분한다. CPU Linux 계약 테스트는 실제 모델의 GPU 추론 통과와 다르다.
 
+## 2026-09-23 실제 검증 결과
+
+- QEMU11.1.0 TCG로 Ubuntu24.04.4/kernel6.8.0-139를 실제 부팅했다.
+- Python3.12.3, Ubuntu psutil5.9.8에서 네트워크 namespace 분리(`lo DOWN`만 존재) 후18개 계약 테스트 통과, exit0.
+- VM 준비·부팅·검사·종료 약112.28초, Windows에서 관측한 QEMU 최대 RSS 표본1.479GiB. VM은 정상 종료되어 백그라운드에서 계속 실행되지 않는다.
+- 로컬 로그: `work/linux/contracts-20260923-215143.serial.log`, 하네스 run `20260923T125143Z_execute_37212c00`.
+- 별도 [GitHub Actions 검증](https://github.com/jinw00ch01/Dacon_AFDA_Challenge/actions/runs/35863327222)에서도 Ubuntu24.04/Windows 각각 Python3.12 + psutil6.1.1의18개 테스트를 통과했다.
+- CPU VM psutil은 평가 버전과 다르다. Torch/CUDA/실제 영상 추론은 이 검사의 대상이 아니다. CUDA Docker 이미지는 정의만 작성했고 아직 빌드·실행하지 않았다.
+
 ## 로컬 환경 준비
 
 현재 Windows에서 WSL 명령은 존재하지만 런타임은 설치되어 있지 않다.

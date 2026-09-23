@@ -42,7 +42,8 @@ def source_hashes():
     paths = [*ROOT.glob("*.md"), *ROOT.glob("*.html"), *ROOT.glob("Baseline/*.ipynb"),
              *ROOT.glob("harness/*.py"), *ROOT.glob("configs/*.json"),
              *ROOT.glob("scripts/*.ps1"), *ROOT.glob("scripts/*.py"), *ROOT.glob("requirements/*.txt"),
-             *ROOT.glob("src/*.py"), *ROOT.glob("tests/*.py"), *ROOT.glob("docs/*.md"), *ROOT.glob("docs/*.csv")]
+             *ROOT.glob("src/*.py"), *ROOT.glob("tests/*.py"), *ROOT.glob("docs/*.md"), *ROOT.glob("docs/*.csv"),
+             *ROOT.glob("environment/*.py"), *ROOT.glob("environment/Dockerfile"), *ROOT.glob(".github/workflows/*.yml")]
     return {p.relative_to(ROOT).as_posix(): sha(p) for p in sorted(paths)}
 
 

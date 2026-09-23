@@ -1,0 +1,36 @@
+{
+  "model": "dinov2_vits14",
+  "revision": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+  "license": "Apache-2.0",
+  "state_tensors": 175,
+  "parameters": 22056576,
+  "files": [
+    {
+      "url": "https://raw.githubusercontent.com/facebookresearch/dinov2/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md",
+      "local_path": "artifacts/pretrained/dinov2_vits14/README.md",
+      "bytes": 32799,
+      "sha256": "d1bc2e9686522bbd66ed6123dc81eb36b3a98e8ea9a2ca97778f54a1c641c9e1"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookresearch/dinov2/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE",
+      "local_path": "artifacts/pretrained/dinov2_vits14/LICENSE",
+      "bytes": 11359,
+      "sha256": "600cc67cc4cb2f5ea317dcfc687ad1c74dc4bec8782bbe9db0afd83513b935b7"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookresearch/dinov2/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md",
+      "local_path": "artifacts/pretrained/dinov2_vits14/MODEL_CARD.md",
+      "bytes": 9152,
+      "sha256": "70ca59606bee0a5fbb1baec80e7e29a93cd7cfbe26ca1910c52a852c4aab09d0"
+    },
+    {
+      "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
+      "local_path": "artifacts/pretrained/dinov2_vits14/dinov2_vits14_pretrain.pth",
+      "bytes": 88283115,
+      "sha256": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9"
+    }
+  ],
+  "verification": "HTTPS download, recorded SHA256, weights_only deserialization; not author-signed weight checksum",
+  "status": "candidate_acquired_not_integrated_or_finetuned",
+  "note": "Offline architecture packaging and real-video inference remain. Do not use torch.hub remote loads in submission."
+}

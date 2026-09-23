@@ -11,14 +11,14 @@
 ## 이번에 구체화한 사항
 
 1. comma2k19 1분 실제 영상·센서와 DoTA 주석을 확보했다. 10Hz 연속 타깃599행, Stage2 검수 후보2,682개를 만들었다. 자세한 확보 방법과 인력 예산은 DATA_ACQUISITION.md에 있다.
-2. comma2k19/DoTA/CCD/KITTI와 ResNet/MobileNet/MViT 후보의 출처·이용조건·보류 사유를 RESOURCE_LICENSES.md에 기록했다. 영상 전체 또는 모든 사전학습 가중치 사용 조건이 확정된 것은 아니다.
-3. 공식 일정을2026-09-23 다시 확인했다. 팀 병합은9월23일23:59, 제출은9월29일10:00, 종료는9월30일10:00, 2차 자료는10월5일10:00 마감이다. https://www.dacon.io/competitions/official/236753/overview/schedule
-4. 사용자가 jinw00ch01/Dacon_AFDA_Challenge 공개 저장소를 생성했다. 코드와 README를 게시하고 origin으로 연결한다. Git 사용법은 GIT_WORKFLOW.md를 따른다.
+2. comma2k19/DoTA/CCD/KITTI와 DINOv2/ResNet/MobileNet/MViT 후보의 출처·이용조건·보류 사유를 RESOURCE_LICENSES.md에 기록했다. Apache2.0 DINOv2 ViT-S/14 공식 가중치는 실제 확보·state_dict 로딩 확인했다. 다른 영상·가중치의 사용 조건이 모두 확정된 것은 아니다.
+3. 사용자가 개인 참가라고 확인하여 팀 구성·병합 점검을 범위에서 제외했다. 공식 제출 마감은9월29일10:00, 종료는9월30일10:00, 2차 자료는10월5일10:00이다. https://www.dacon.io/competitions/official/236753/overview/schedule
+4. 사용자가 생성한 jinw00ch01/Dacon_AFDA_Challenge 공개 저장소에 코드와 README를 게시했고 origin/main 추적을 연결했다. Git 사용법은 GIT_WORKFLOW.md를 따른다.
 5. Linux CPU VM 준비와 CUDA 컨테이너/오프라인 추론 스크립트를 구성했다. 실제 검증 범위는 environment/README.md와 로컬 STATUS.md에 기록한다.
 
 ## 사용자가 직접 해야 할 일
 
-- **오늘 우선:** DACON 로그인 후 본인의 참가·팀 상태를 확인한다. 팀 병합이 필요하면9월23일23:59 전에 처리한다. 계정 내부 상태는 아직 확인되지 않았으며 웹 공개 일정 확인과 다르다.
+- **제출 일정:** 개인 참가 기준9월29일10:00 전에 검증된 submit.zip을 제출한다. 현재 모델은 준비되지 않았으므로 제출 준비 완료 상태는 아니다.
 - **라벨링 시간 배정:** 최소1인4~7시간을 제안한다(S2 50개 검수3~6시간, S1 실제 재촬영0.5~1시간, S3 정렬 검수0.5시간). 실제 가용 인력·시간은 사용자가 정한다.
 - **물리적 촬영:** 허용된 독립 원본20~30개를 스마트폰으로 화면 재촬영한다. 원본과 파생은 같은 데이터 그룹으로 관리한다.
 - **GPU Linux 준비:** 관리자 PowerShell에서 WSL2 설치와 필요한 재부팅/펌웨어 가상화 설정은 사용자가 수행한다. environment/README.md에 명령을 제공했다. CPU QEMU는 이 단계를 대체하지 않는다.
