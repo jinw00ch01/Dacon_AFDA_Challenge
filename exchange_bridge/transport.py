@@ -56,7 +56,11 @@ def configure(home,role,exchange_root,peer_id=None):
                       devices=[{'deviceID':d,'encryptionPassword':''} for d in sorted(members)],
                       rescanIntervalS=60,fsWatcherEnabled=True)
         if owner!=role:
-            folder['versioning']={**folder.get('versioning',{}),'type':'simple','params':{'keep':'5'}}
+            # The bridge keeps immutable job/result IDs itself.  Avoid
+            # Syncthing's empty simple-versioner path on Windows v2: it can
+            # resolve to the receive folder root and leave status updates
+            # permanently pending after a conflict.
+            folder.pop('versioning',None)
         cfg['folders']=[f for f in cfg['folders'] if f['id']!=folder_id]+[folder]
         ignore=path/'.stignore'
         if not ignore.exists():
