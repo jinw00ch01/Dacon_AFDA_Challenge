@@ -24,6 +24,13 @@ Linux Ubuntu CPU VM의 네트워크 분리 테스트18개와 GitHub Actions의 L
 실제 가중치를 이용한 CUDA 세 Stage 전체 추론은 다음 검증 단계입니다.
 Pro 360은 데이터 정리·라벨 검수·CPU 테스트, Ultra는 GPU 실험·모델 검증·패키징을 담당합니다.
 
+2026-09-25 운영 명세는 **PC별 Codex 작업 하나**를 기준으로 합니다. Pro가 결과를 검토하고 다음 실험을 제안하며,
+Ultra가 채택과 GPU 실행을 결정합니다. Claude는 비교 검증 후 선택적으로 추가할 독립 검토 후보입니다.
+[에이전트 구성 결정](docs/AGENT_OPERATING_DECISION.md), [Ultra 작업 지시서](docs/threads/ULTRA_THREAD.md),
+[Pro 작업 지시서](docs/threads/PRO_THREAD.md), [실험 파일 규약](docs/EXPERIMENT_PROTOCOL.md),
+[라벨링·전처리 전 데이터 명세](docs/DATA_PREPARATION_SPEC.md)를 순서대로 참고하세요.
+현재 파일 전송·허용 CPU 작업 자동화와 향후 Codex 학습·검토 반복 자동화는 별도이며, 후자는 아직 구현 전입니다.
+
 공개 저장소에는 직접 작성한 코드와 계획·출처를 올립니다. 영상·가중치·실행 로그·장치 식별자·공식 배포 원본은 별도 보관합니다.
 
 계획: [docs/PLAN.md](docs/PLAN.md), 분석: [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md),

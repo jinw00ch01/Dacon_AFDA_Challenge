@@ -14,6 +14,10 @@ Nexar104개는 공식 SHA-256 대조와 전체122,175프레임 디코딩을 통�
 comma 원본24개도 전체 디코딩을 확인했다. SRC014는 시간 정렬 오차 때문에 S3에서 제외했다.
 S1 휴대폰 재촬영, S2 정답 작성, 모델 학습은 아직 하지 않았다.
 
+라벨링 전에 [데이터 처리 상세 명세](DATA_PREPARATION_SPEC.md)의 P0~P2(출처·그룹·시간축·split)를 확인한다.
+Nexar의 사건 참고 시각은 정답이 아니며, S3 연속 센서 CSV는 대응 10Hz 영상이나 공식 클래스 정답을 뜻하지 않는다.
+기존 검수 파일을 준비 스크립트로 덮어쓰지 않는다.
+
 ## 1. S23 재촬영부터 시작하려면
 
 일반 PowerShell에서 촬영용 영상 폴더를 연다.
@@ -64,5 +68,6 @@ Nexar 웹사이트의 **Files and versions** 탭에 [train](https://huggingface.
 ## 조건과 두 노트북 간 전달
 
 comma는 공식 MIT 표기와 원문을 보관했다. Nexar는 별도 Nexar Open Data License를 보존했으며 사고 분석용으로 사용하고 S1 재촬영 원천으로는 쓰지 않는다.
-Pro에는 위 경로들을 USB 등으로 프로젝트 루트 아래 같은 위치에 복사하고 LICENSE/README/manifest도 같이 보관한다. Git clone만으로 영상이 내려오지는 않는다.
+Pro에는 2026-09-24 Syncthing과 CPU worker로 자료 수신·해시 검증을 확인했다. 최초 전송을 다시 할 필요는 없다.
+새 자료는 LICENSE/README/manifest와 함께 [자동 교환](AUTO_EXCHANGE.md)을 사용한다. Git clone만으로 영상이 내려오지는 않는다.
 자세한 출처·계정 설정·재현 명령은 [데이터 확보 실행안](DATA_SOURCING_EXECUTION.md), 수치 근거는 [확보 결과](DATA_ACQUISITION_RESULT.json)를 따른다.

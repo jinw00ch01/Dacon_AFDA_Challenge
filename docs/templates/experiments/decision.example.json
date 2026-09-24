@@ -1,0 +1,20 @@
+{
+  "schema_version": "afda.experiment.v1",
+  "example_only": true,
+  "kind": "decision",
+  "packet_id": null,
+  "experiment_id": null,
+  "sender": "ultra5060",
+  "target": "pro360",
+  "created_utc": null,
+  "parent": null,
+  "supersedes": null,
+  "provenance": {"tool": "Codex", "model": null, "evidence": []},
+  "spec_sha256": null,
+  "result_manifest_sha256": null,
+  "review_manifest_sha256": null,
+  "decision": null,
+  "reason": null,
+  "next_experiment_id": null,
+  "remaining_budget": {"gpu_seconds": null, "experiments": null}
+}

@@ -27,6 +27,11 @@ Pro 360 실물 설치·CPU 검증 결과를 반환 ZIP으로 수신했다. 무�
 최초 Pro 설치/장치 등록 뒤 검수 결과를 자동 반환한다. 물리 촬영과 라벨 판단은 사람이 수행한다.
 별도 Codex 에이전트 세션이나 분산 GPU 학습을 자동 생성하지 않는다.
 
+2026-09-25 역할 명세: [운영 결정](AGENT_OPERATING_DECISION.md)에 따라 Ultra/Pro에 Codex 작업 하나씩을 둔다.
+[Ultra](threads/ULTRA_THREAD.md)가 실험 채택·GPU 실행, [Pro](threads/PRO_THREAD.md)가 데이터 QA·CPU 지표 재현·한 가지 변경 제안을 담당한다.
+[실험 규약](EXPERIMENT_PROTOCOL.md)은 신규 제어 계층의 구현 명세이며 현 worker에 학습/LLM 실행 기능이 추가된 것은 아니다.
+학습 전에 [데이터 게이트 P0~P4](DATA_PREPARATION_SPEC.md)를 Stage별로 통과하고 고정 commit 실행 경로를 준비한다.
+
 1. 사용자의 목적·공식 데이터 계약 → docs 및 AGENTS 규약.
 2. bootstrap → venv → doctor → inventory → contract tests → synthetic smoke.
 3. 실제 학습 전 데이터 registry/license/timebase/split을 확정.
@@ -58,7 +63,7 @@ Pro 360 실물 설치·CPU 검증 결과를 반환 ZIP으로 수신했다. 무�
 | E0 | 3개 Stage 통합/추론 튜닝 | 누락·중복0, 범주/프레임/표본 계약, 원본 입력 불변, 재실행 일관성 |
 | S0 | Linux 오프라인 최종 검증 | 설치10분/전체60분/크기 제한/모든 모델 로딩/외부 접근 없음 |
 
-단계는 달력 추정보다 완료 조건으로 관리한다. 1인 수동 검수·촬영은 총6시간30분으로 배정했다. LABELING_AND_S23_PLAN.md의 시작 조건과 재검수 기준을 따른다.
+단계는 달력 추정보다 완료 조건으로 관리한다. 수동 검수·촬영390분에 Nexar 선별30~45분을 추가해 초기 총7시간~7시간15분을 배정했다. DATA_PREPARATION_SPEC.md의 시작 조건과 재검수 기준을 따른다. S3 30분은 파일럿 spot check이며 전체 정답 승인 시간은 아니다.
 공개 Git은 사용자가 지정한 jinw00ch01/Dacon_AFDA_Challenge로 연결한다. 데이터 계획/조건은 DATA_ACQUISITION.md와 RESOURCE_LICENSES.md를 기준으로 한다.
 우선순위는 Stage2/3(각 0.4) 데이터 타당성과 시간축, 다음 Stage1(0.2) 원본-재촬영 일반화다.
 공개 예제만으로 순위/정확도 목표치를 제시하지 않는다.
