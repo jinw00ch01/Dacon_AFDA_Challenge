@@ -149,7 +149,7 @@ def publish(cfg,action,paths=()):
         raise ValueError('Unsupported action')
     outbox,_,other=dirs(cfg)
     job_id=uuid.uuid4().hex
-    root=Path(cfg['project_root'])
+    root=Path(cfg['project_root']).resolve()
     files={}
     for name in paths:
         p=safe_path(root,name)
@@ -189,7 +189,7 @@ def publish(cfg,action,paths=()):
 
 
 def import_files(cfg,inbox,job,rows):
-    root=Path(cfg['project_root'])
+    root=Path(cfg['project_root']).resolve()
     destination_root=root if job['action']!='return_reviews' else root/'data/derived/peer_reviews'/job['sender']/job['id']
     targets=[];required=0
     for row in rows:
@@ -244,7 +244,7 @@ def sync_code(cfg,state):
 def watch_reviews(cfg,state):
     if cfg['role']!='pro360':
         return
-    root=Path(cfg['project_root']);watch=state.setdefault('watch',{})
+    root=Path(cfg['project_root']).resolve();watch=state.setdefault('watch',{})
     candidates=[root/p for p in WATCH]
     captures=root/'data/captures/s23'
     if captures.exists():

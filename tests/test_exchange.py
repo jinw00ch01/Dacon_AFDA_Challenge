@@ -44,6 +44,12 @@ class ExchangeTests(unittest.TestCase):
         for name in ('configs/local-exchange.json','data/derived/.env','data/external/.cache/token','data/derived/start.ps1'):
             self.assertFalse(bridge.allowed_data(name))
 
+    def test_project_root_is_normalized_before_relative_paths(self):
+        self.source(self.ultra)
+        self.ultra['project_root']=str(Path(self.ultra['project_root'])/'..'/'ultra5060')
+        job=bridge.publish(self.ultra,'import_bundle',['data/derived'])
+        self.assertEqual(self.worker(self.pro)['jobs'][job['id']]['status'],'completed')
+
     def test_arbitrary_commands_are_rejected(self):
         job=bridge.publish(self.ultra,'ping')
         job['action']='powershell'
