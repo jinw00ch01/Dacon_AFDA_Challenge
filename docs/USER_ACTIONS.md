@@ -10,7 +10,7 @@
 
 ## 이번에 구체화한 사항
 
-1. comma2k19 1분 실제 영상·센서와 DoTA 주석을 확보했다. 10Hz 연속 타깃599행, Stage2 검수 후보2,682개를 만들었다. 자세한 확보 방법과 인력 예산은 DATA_ACQUISITION.md에 있다.
+1. 초기 comma1분/DoTA 주석 파일럿 이후, comma의 서로 다른 날짜24개 영상·센서와 Nexar train 영상104개를 추가 확보했다. 실제 결과는 DATA_ACQUISITION_RESULT.json, 사용 순서는 DATA_SOURCING_EXECUTION.md에 있다. 주석만 받은 DoTA와 실제 영상이 있는 Nexar를 구분한다.
 2. comma2k19/DoTA/CCD/KITTI와 DINOv2/ResNet/MobileNet/MViT 후보의 출처·이용조건·보류 사유를 RESOURCE_LICENSES.md에 기록했다. Apache2.0 DINOv2 ViT-S/14 공식 가중치는 실제 확보·state_dict 로딩 확인했다. 다른 영상·가중치의 사용 조건이 모두 확정된 것은 아니다.
 3. 사용자가 개인 참가라고 확인하여 팀 구성·병합 점검을 범위에서 제외했다. 공식 제출 마감은9월29일10:00, 종료는9월30일10:00, 2차 자료는10월5일10:00이다. https://www.dacon.io/competitions/official/236753/overview/schedule
 4. 사용자가 생성한 jinw00ch01/Dacon_AFDA_Challenge 공개 저장소에 코드와 README를 게시했고 origin/main 추적을 연결했다. Git 사용법은 GIT_WORKFLOW.md를 따른다.
@@ -20,7 +20,8 @@
 
 - **제출 일정:** 개인 참가 기준9월29일10:00 전에 검증된 submit.zip을 제출한다. 현재 모델은 준비되지 않았으므로 제출 준비 완료 상태는 아니다.
 - **시간 배정 완료:** 1인 총6시간30분으로 계획을 확정했다. S2 4시간10분, S1 1시간30분, S3 30분, 휴식20분. 첫날4시간10분/다음날2시간20분의 상세 순서와 물량 조정 기준은 [LABELING_AND_S23_PLAN.md](LABELING_AND_S23_PLAN.md)를 따른다. 영상 확보·설치 대기시간은 별도다.
-- **물리적 촬영:** 허용된 독립 원본24개를 S23 Ultra로 각2회, 총48회 촬영한다. 두 노트북 화면·밝기·각도를 배분한 기록표를 준비했다. 원본24개와 S2 실제 영상은 아직 미확보이므로 출처/조건 확인 후 촬영·라벨링을 시작한다.
+- **물리적 촬영:** 확보한 comma24개에서 만든 MP4를 S23 Ultra로 각2회, 총48회 촬영한다. `data/derived/comma_subset_v1/s23_capture_ready.csv`의 실제 경로와 조건을 따른다.
+- **S2 선별·라벨링:** Nexar104개 검수표에서 실제 접촉·차선 진입 적합 사례를30~50개 선별한다. 원본80개 양성은 near-miss도 포함한다. 선별30~45분은 기존 수동 작업6시간30분에 별도 추가한다. Hugging Face 웹 신청과 PC 인증은 사용자가 완료했으므로 반복하지 않는다.
 - **GPU Linux 준비:** [WSL2_GPU_STEPS.md](WSL2_GPU_STEPS.md)의 관리자 PowerShell → 재부팅 → Ubuntu 설치/검증 순서를 따른다. WSL CUDA 연산과 최종 모델 오프라인 추론을 별도 완료 조건으로 관리한다.
 - **Pro 동기화·검수:** [PRO360_STEPS.md](PRO360_STEPS.md)에 새 형제 폴더 clone, 기존 기반 Python 찾기, 새 CPU venv, 원본 자료 복사, 검수 세션 생성과 ZIP 반환 명령을 제공했다. 기존 venv는 복사하지 않는다.
 

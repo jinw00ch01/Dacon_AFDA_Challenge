@@ -1,13 +1,14 @@
 # 외부 데이터·사전학습 모델 이용조건
 
-확인일: 2026-09-23. 확인 근거와 사용 결정을 기록하며 포괄적 권리 보증으로 해석하지 않는다.
+확인일: 2026-09-24. 확인 근거와 사용 결정을 기록하며 포괄적 권리 보증으로 해석하지 않는다.
 [대회 규칙](https://www.dacon.io/competitions/official/236753/overview/rules)은 누구나 접근 가능한 공개 자원,
 최소 비영리 사용 허용, 각 조건 준수와 출처 명시를 요구한다.
 코드 라이선스와 영상·가중치 조건은 구분한다. 평가 데이터의 학습/튜닝/의사라벨링과 파일 간 정보 공유는 금지다.
 
 | 자원 | 근거·조건 | 결정 |
 |---|---|---|
-| comma2k19 | [작성자 GitHub](https://github.com/commaai/comma2k19), [공식 데이터 카드](https://huggingface.co/datasets/commaai/comma2k19/blob/main/README.md)의 MIT 표기. 저작권·허가문 유지 | 1분 영상·센서 파일럿 확보·정렬에 사용. 대규모 학습 미실시 |
+| comma2k19 | [작성자 GitHub](https://github.com/commaai/comma2k19), [공식 데이터 카드](https://huggingface.co/datasets/commaai/comma2k19/blob/main/README.md)의 MIT 표기. 저작권·허가문 유지 | 서로 다른 날짜24개 영상·센서를 S1/S3로 선정. 실제 결과는 DATA_ACQUISITION_RESULT.json. 학습 미실시 |
+| Nexar Collision Prediction | [공식 데이터](https://huggingface.co/datasets/nexar-ai/nexar_collision_prediction), [Nexar Open Data License](https://huggingface.co/datasets/nexar-ai/nexar_collision_prediction/blob/main/LICENSE). 출처·저작권/조건 보존, 영리 재판매·재식별·유해/부당한 보험 활용 등 금지 | 사용자 계정 접근 신청·OAuth 연결 완료. train 양성80/정상24를 S2 후보로 선정. S1 변형/재촬영에는 배정하지 않음. 양성은 collision+near-miss 혼합 |
 | DoTA | [저장소](https://github.com/MoonBlvd/Detection-of-Traffic-Anomaly) MIT LICENSE, 작성자의 원 채널 공유 권한 확보 설명 | 주석 확보. 영상의 대회 사용/재배포/보고서 첨부 범위 확인 후 학습 사용 |
 | CCD | [저장소](https://github.com/Cogito2012/CarCrashDataset) MIT LICENSE, YouTube 수집 영상 | 문서만 확보. 소프트웨어 MIT만으로 모든 영상 권리 확정 불가. 영상 조건 확인 전 학습 보류 |
 | KITTI raw | [공식 사이트](https://www.cvlibs.net/datasets/kitti/) CC BY-NC-SA3.0. 저작자 표시·비상업·동일조건 | 로그인 필요, 후순위. 파생물/대회 보고서 조건 확인 필요. yaw를 조향각 정답으로 단정하지 않음 |
@@ -42,8 +43,12 @@ Torchvision0.23.0의 고정 enum을 기록하며 변동 가능한 DEFAULT를 사
 
 ## 출처 보존
 
-파일별 revision·해시는 `data/external/pilot_manifest.json`에, LICENSE/README 원문은 외부 데이터 폴더에 보관했다.
+파일별 revision·해시는 `data/external/pilot_manifest.json`과 각 추가 데이터의 manifest.json에, LICENSE/README 원문은 외부 데이터 폴더에 보관한다.
 공개 Git에는 외부 원본 대신 출처와 수집 코드를 제공한다.
 comma2k19: Schafer et al., *A Commute in Data: The comma2k19 Dataset*, 2018, arXiv:1812.05752.
 DoTA: Yao et al., *DoTA: Unsupervised Detection of Traffic Anomaly in Driving Videos*, IEEE TPAMI, 2022.
 CCD 최종 사용 시 작성자 저장소의 논문 인용 표기를 보고서에 포함한다.
+
+Nexar 라이선스 지정 인용: Moura, Daniel C., and Zvitia, Orly. "Nexar Collison Dataset." Hugging Face, 2025.
+https://huggingface.co/datasets/nexar-ai/nexar_collision_prediction
+관련 논문: Moura, Zhu, Zvitia, *Nexar Dashcam Collision Prediction Dataset and Challenge*, CVPR Workshops2025, https://arxiv.org/abs/2503.03848.

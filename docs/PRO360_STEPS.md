@@ -86,7 +86,7 @@ foreach ($referenceName in @('overview.md','evaluation.md','data_description.md'
 if ($LASTEXITCODE -ne 0) { throw 'Pro 종합 점검 실패: runs의 stderr를 확인하세요.' }
 ```
 
-기대 결과: 테스트 18개, doctor, Baseline 20영상 inventory, CPU synthetic smoke 통과.
+기대 결과: 현재 회귀 테스트21개, doctor, Baseline20영상 inventory, CPU synthetic smoke 통과.
 이는 새 clone의 실행 점검이며 모델 정확도 검증은 아니다.
 
 ## 4. 소규모 자료와 검수 세션 생성
@@ -109,10 +109,14 @@ explorer.exe $reviewRoot
 
 ## 5. Pro에서 실제로 할 일
 
-1. **지금 가능:** 위 설치·점검·자료 준비. S2 후보 출처/이용조건/실제 영상 유무 정리. CSV의 label_status는 아직 pending_video_and_license다.
+2026-09-24 추가 확보: Ultra에 comma24개와 Nexar104개 실제 영상이 있다. 공개 Git에는 영상이 없으므로 USB 등으로 필요한 data 하위 경로를 그대로 복사한다.
+S1은 `data/derived/comma_subset_v1/`, S2는 `data/external/nexar_subset_v1/train/` 및 `data/derived/nexar_subset_v1/`를 사용한다.
+원본의 LICENSE/README/manifest도 함께 보존한다. S3 원 센서를 재검증하려면 `data/external/comma2k19_subset_v1/`도 복사한다.
+
+1. **지금 가능:** 위 설치·점검 후 Ultra의 새 실제 영상 자료를 수신한다. 기존 DoTA 파일럿 CSV는 여전히 영상 없는 후보이며 Nexar 작업표와 섞지 않는다.
 2. **S3 30분:** stage3_alignment_20.csv와 stage3_frames/의 20장을 대조한다. 프레임 번호는 0기반이며 시간/센서 간격도 확인한다. alignment_ok를 확인한 행만 채우고 notes에 문제를 기록한다. 공식 분류 정답을 새로 만든 것으로 표시하지 않는다.
-3. **원본 확보 후 S1 90분:** LABELING_AND_S23_PLAN.md에 따라 양쪽 화면과 S23 Ultra로 48테이크 촬영. s23_capture_plan.csv에 실제 원본·그룹·설정·휴대폰 파일명·해시를 기록한다. 촬영할 때도 같은 출처는 같은 split으로 묶는다.
-4. **S2 영상 확보 후 250분:** stage2_candidates_50.csv를 가이드에 따라 검수한다. 실제 원본 프레임 번호와 추출 이미지 파일명의 대응이 확인된 자료를 사용한다. 판단 불가능하면 빈칸과 이유를 남긴다. 다음 날 10개는 기존 답을 가리고 재검수한다.
+3. **S1 90분:** LABELING_AND_S23_PLAN.md에 따라 양쪽 화면과 S23 Ultra로48테이크 촬영. `data/derived/comma_subset_v1/s23_capture_ready.csv`에 실제 촬영값·휴대폰 파일명·해시를 추가한다. 원본과 파생은 같은 split으로 묶는다.
+4. **S2 선별30~45분 + 검수250분:** `data/derived/nexar_subset_v1/stage2_review_with_metadata.csv`를 사용한다. 실제 접촉/near-miss를 나누고 차선 진입이 보이는 사례를 우선한다. 실제 원본 프레임 번호와 추출 이미지 파일명의 대응을 확인한다. 불확실 항목은 빈칸과 이유를 남기며 다음 날10개를 가리고 재검수한다.
 5. **반환:** 검수 CSV·S3 표본 이미지·session.json·문제 메모를 ZIP으로 Ultra에 전달한다. 영상 원본은 별도 USB 폴더로 전달한다. Pro에서 DINO/MViT 전체 학습을 시작하지 않는다.
 
 S2용 전문 프레임 라벨링 UI는 아직 구현하지 않았다. 후보 CSV 생성은 라벨링 도구나 실제 정답 확보 완료를 뜻하지 않는다.

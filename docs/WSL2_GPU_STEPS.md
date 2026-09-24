@@ -87,7 +87,7 @@ Ubuntu Bash, clone한 프로젝트 루트에서 실행한다. 아래 GPU 검사�
 .venv-linux-cu128/bin/python -m harness execute --profile ultra5060 --kind cpu --timeout 180 -- .venv-linux-cu128/bin/python -m unittest discover -s tests -v
 ```
 
-완료 기준: GPU run의 exit code 0 및 CUDA_MATMUL_PASS, 계약 테스트 18개 통과.
+완료 기준: GPU run의 exit code 0 및 CUDA_MATMUL_PASS, 현재 회귀 테스트21개 통과(기존 계약18개 + 원격 ZIP 수집3개).
 각 명령이 출력한 runs 경로에 stdout/stderr/환경·코드 해시가 남는다. 패키지 설치가 끝난 뒤에만 이 검사를 한다.
 
 네트워크를 끈 **계약 테스트**도 확인하려면 아래를 추가 실행한다.

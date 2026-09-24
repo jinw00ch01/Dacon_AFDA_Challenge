@@ -1,0 +1,64 @@
+{
+  "verified_on": "2026-09-24",
+  "new_source_videos": 128,
+  "new_source_video_sensor_and_metadata_bytes": 2700010268,
+  "comma2k19": {
+    "repository": "https://huggingface.co/datasets/commaai/comma2k19",
+    "revision": "4bff77c7254c654c28d4c2726186b4e825adccee",
+    "license": "MIT in official dataset card; original license preserved",
+    "source_videos": 24,
+    "distinct_recording_dates": 24,
+    "source_seconds": 1438.8297840000603,
+    "decoded_frames": 28706,
+    "video_and_sensor_bytes": 903561080,
+    "s1_playback_videos": 24,
+    "s1_playback_fps": 20,
+    "s1_capture_plan_rows": 48,
+    "s1_real_phone_captures": 0,
+    "s3_eligible_sources": 23,
+    "s3_auxiliary_rows": 13776,
+    "s3_excluded": {
+      "SRC014": "nearest-frame offset exceeds 30ms; source remains available for S1"
+    },
+    "sensor_duplicate_rows_collapsed": {
+      "speed": 2,
+      "steering_angle": 13
+    },
+    "group_split": {
+      "train": 16,
+      "validation": 4,
+      "test": 4
+    },
+    "raw_directory": "data/external/comma2k19_subset_v1",
+    "derived_directory": "data/derived/comma_subset_v1",
+    "integrity": "All raw members CRC-checked; SHA-256 recorded and rechecked locally; whole remote ZIP publisher hashes not verified."
+  },
+  "nexar": {
+    "repository": "https://huggingface.co/datasets/nexar-ai/nexar_collision_prediction",
+    "revision": "260710de7e076bc3f5259071421a77dd76d36ac3",
+    "license": "Nexar Open Data License, not MIT",
+    "authenticated_download_completed": true,
+    "source_videos": 104,
+    "positive_collision_or_near_miss": 80,
+    "negative": 24,
+    "video_bytes": 1796382995,
+    "decoded_frames": 122175,
+    "source_seconds": 4058.2950454131683,
+    "publisher_lfs_sha256_verified_videos": 104,
+    "official_test_videos_downloaded": 0,
+    "dacon_ground_truth_labels_created": 0,
+    "raw_directory": "data/external/nexar_subset_v1",
+    "review_csv": "data/derived/nexar_subset_v1/stage2_review_with_metadata.csv"
+  },
+  "verification": {
+    "tests_passed": 21,
+    "new_range_reader_tests": 3,
+    "model_training_performed": false
+  },
+  "remaining": [
+    "S23 physical recapture",
+    "Nexar actual-contact and lane-entry suitability screening",
+    "S2 manual labels and event-group split",
+    "S3 official class mapping and human review"
+  ]
+}
