@@ -6,6 +6,7 @@
 | H1 완료 | Pro / Ultra | Pro 실물 검증·반환 ZIP 무결성·수정 병합·Ultra 재검증 완료 | H0 | STATUS.md의 왕복 검증 기록 |
 | H2 완료 | Ultra | 공개 GitHub origin 연결·README·코드 게시 | H0 | jinw00ch01/Dacon_AFDA_Challenge |
 | H3 준비 완료 | Pro 실행 / Ultra 안내 | 새 clone·CPU 환경·검수 세션·반환 명령 | H2 | PRO360_STEPS.md; 새 clone의 Pro 실물 실행은 대기 |
+| H4 Ultra 설치 완료 / Pro 등록 대기 | 양쪽 | Syncthing 자동 전송, CPU 작업 큐, 검수본 자동 반환 | H2 | AUTO_EXCHANGE.md; Pro 최초 설치 및 실제 왕복은 별도 확인 |
 | D4 계획 완료 | 사용자 촬영·검수 | 1인6시간30분, S23 Ultra 24원본×2회 촬영 | 허용된 영상 확보 | LABELING_AND_S23_PLAN.md 및 docs/templates/s23_capture_plan.csv |
 | L1 안내 완료 | 사용자 관리자 설치 / Ultra 검증 | WSL2 Ubuntu24.04 + CUDA 연산 | Windows 관리자 권한/재부팅 | WSL2_GPU_STEPS.md; 설치와 GPU Linux 실측은 대기 |
 | D0 | Pro 조사 / 사용자 자료 | 공식 데이터 설명·출처 기록 확보; 세부 평가식·자원별 이용조건 보완 | 없음 | data_description.md 및 docs/reference/official_sources_20260923.md |

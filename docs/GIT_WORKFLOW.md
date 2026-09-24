@@ -4,7 +4,10 @@
 AFDA = Accident Fraud Detection AI. 사용자가 공개 저장소로 지정했다.
 
 코드·검증기·설정·출처 문서만 Git으로 공유한다. `.gitignore`가 영상·모델·실행 기록·개인 장치 정보·공식 배포 원본을 제외한다.
-ZIP은 별도 데이터 전송/오프라인 인계에만 사용한다. venv를 복사하거나 GPU lock을 CPU PC에 설치하지 않는다.
+데이터는 [자동 교환](AUTO_EXCHANGE.md)의 Syncthing 경로를 우선하고 ZIP은 오프라인 대안으로 사용한다. venv를 복사하거나 GPU lock을 CPU PC에 설치하지 않는다.
+
+자동 수신기는 main, 지정된 origin, 작업 트리가 깨끗한 경우에만 5분 간격으로 fetch 및 fast-forward를 수행한다.
+코드 수정 중이면 건너뛴다. commit/push는 자동 수행하지 않으며 아래 개발 브랜치 절차를 따른다.
 
 ## Pro 360 최초 연결
 

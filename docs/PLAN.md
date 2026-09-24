@@ -23,6 +23,10 @@ Pro 360 실물 설치·CPU 검증 결과를 반환 ZIP으로 수신했다. 무�
 
 ## 실행 흐름
 
+두 PC의 반복 인계는 AUTO_EXCHANGE.md의 Git + Syncthing + 허용된 CPU 작업 큐로 전환한다.
+최초 Pro 설치/장치 등록 뒤 검수 결과를 자동 반환한다. 물리 촬영과 라벨 판단은 사람이 수행한다.
+별도 Codex 에이전트 세션이나 분산 GPU 학습을 자동 생성하지 않는다.
+
 1. 사용자의 목적·공식 데이터 계약 → docs 및 AGENTS 규약.
 2. bootstrap → venv → doctor → inventory → contract tests → synthetic smoke.
 3. 실제 학습 전 데이터 registry/license/timebase/split을 확정.

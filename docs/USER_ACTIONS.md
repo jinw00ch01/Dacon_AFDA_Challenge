@@ -23,7 +23,7 @@
 - **물리적 촬영:** 확보한 comma24개에서 만든 MP4를 S23 Ultra로 각2회, 총48회 촬영한다. `data/derived/comma_subset_v1/s23_capture_ready.csv`의 실제 경로와 조건을 따른다.
 - **S2 선별·라벨링:** Nexar104개 검수표에서 실제 접촉·차선 진입 적합 사례를30~50개 선별한다. 원본80개 양성은 near-miss도 포함한다. 선별30~45분은 기존 수동 작업6시간30분에 별도 추가한다. Hugging Face 웹 신청과 PC 인증은 사용자가 완료했으므로 반복하지 않는다.
 - **GPU Linux 준비:** [WSL2_GPU_STEPS.md](WSL2_GPU_STEPS.md)의 관리자 PowerShell → 재부팅 → Ubuntu 설치/검증 순서를 따른다. WSL CUDA 연산과 최종 모델 오프라인 추론을 별도 완료 조건으로 관리한다.
-- **Pro 동기화·검수:** [PRO360_STEPS.md](PRO360_STEPS.md)에 새 형제 폴더 clone, 기존 기반 Python 찾기, 새 CPU venv, 원본 자료 복사, 검수 세션 생성과 ZIP 반환 명령을 제공했다. 기존 venv는 복사하지 않는다.
+- **Pro 최초 자동 연결:** [AUTO_EXCHANGE.md](AUTO_EXCHANGE.md)의 설치를 한 번 실행하고 Pro 장치 ID를 Ultra에 등록한다. 이후 지정한 검수 CSV와 `data/captures/s23/` 촬영 파일은 자동 반환된다. 기존 venv는 복사하지 않는다. [PRO360_STEPS.md](PRO360_STEPS.md)의 ZIP 반환은 오프라인 대안이다.
 
 영상 출처 조사, 소규모 다운로드, 출처 장부, 시간 정렬과 검수 후보 생성은 다시 사용자가 처음부터 할 필요 없다.
 
