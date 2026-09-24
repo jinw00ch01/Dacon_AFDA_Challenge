@@ -46,9 +46,15 @@ def configure(home,role,exchange_root,peer_id=None):
         members={d['deviceID'] for d in folder.get('devices',[])}|{my_id}
         if peer_id:
             members.add(peer_id)
+        # Syncthing v2 preserves an encryptionPassword field when it is omitted
+        # from an existing folder device entry.  The AFDA exchange is plain data
+        # on both folders, so explicitly clear the field for every peer.  Leaving
+        # whitespace from the generated defaults makes one side expect encrypted
+        # data and prevents the folder from syncing after TLS connects.
         folder.update(id=folder_id,label='AFDA '+name,path=str(path.resolve()),
                       type='sendonly' if owner==role else 'receiveonly',
-                      devices=[{'deviceID':d} for d in sorted(members)],rescanIntervalS=60,fsWatcherEnabled=True)
+                      devices=[{'deviceID':d,'encryptionPassword':''} for d in sorted(members)],
+                      rescanIntervalS=60,fsWatcherEnabled=True)
         if owner!=role:
             folder['versioning']={**folder.get('versioning',{}),'type':'simple','params':{'keep':'5'}}
         cfg['folders']=[f for f in cfg['folders'] if f['id']!=folder_id]+[folder]
