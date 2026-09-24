@@ -5,6 +5,9 @@
 | H0 | Ultra | 하네스 설치·분석·로컬 검증 | 없음 | STATUS.md 및 runs |
 | H1 완료 | Pro / Ultra | Pro 실물 검증·반환 ZIP 무결성·수정 병합·Ultra 재검증 완료 | H0 | STATUS.md의 왕복 검증 기록 |
 | H2 완료 | Ultra | 공개 GitHub origin 연결·README·코드 게시 | H0 | jinw00ch01/Dacon_AFDA_Challenge |
+| H3 준비 완료 | Pro 실행 / Ultra 안내 | 새 clone·CPU 환경·검수 세션·반환 명령 | H2 | PRO360_STEPS.md; 새 clone의 Pro 실물 실행은 대기 |
+| D4 계획 완료 | 사용자 촬영·검수 | 1인6시간30분, S23 Ultra 24원본×2회 촬영 | 허용된 영상 확보 | LABELING_AND_S23_PLAN.md 및 docs/templates/s23_capture_plan.csv |
+| L1 안내 완료 | 사용자 관리자 설치 / Ultra 검증 | WSL2 Ubuntu24.04 + CUDA 연산 | Windows 관리자 권한/재부팅 | WSL2_GPU_STEPS.md; 설치와 GPU Linux 실측은 대기 |
 | D0 | Pro 조사 / 사용자 자료 | 공식 데이터 설명·출처 기록 확보; 세부 평가식·자원별 이용조건 보완 | 없음 | data_description.md 및 docs/reference/official_sources_20260923.md |
 | D1 | Pro 조사 / Ultra 검증 | S3 시간축 원본 및 10Hz 대응 확인 | D0 | timebase 매핑·경계 테스트 |
 | D2 | Pro | S2 진입·회피·방향 라벨 가이드와 파일럿 | D0 | 미라벨 mask 포함 labels v1 |

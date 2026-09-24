@@ -114,6 +114,9 @@ venv·대형 캐시·개인 장치 정보·가중치·실행 로그는 제외됩
 
 ## 다음 개발과 출처
 
+사용자 실행 문서: [1인6시간30분 배정과 S23 Ultra 촬영](docs/LABELING_AND_S23_PLAN.md),
+[Ultra WSL2/GPU 설치 순서](docs/WSL2_GPU_STEPS.md), [Pro 새 clone·검수·반환 명령](docs/PRO360_STEPS.md).
+
 다수 주행·사고 그룹 확보 → Stage 2 수동 라벨 검수 → 저메모리 디코더/작은 학습 실험 →
 그룹 분리 검증 → 실제 가중치 통합 추론 → Linux GPU 오프라인 검증 순서로 진행합니다.
 공개 예제만으로 모델 성능을 주장하지 않습니다.

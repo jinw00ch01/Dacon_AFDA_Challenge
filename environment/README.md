@@ -66,6 +66,8 @@ stage3.json(ID→검증된10Hz 표본 수)을 별도로 만든다. 공개 Baseli
 
 ## WSL2가 필요한 사용자 단계
 
+관리자 창·재부팅·Ubuntu 명령·실제 CUDA 연산·오류별 분기를 포함한 최신 순서는 [WSL2_GPU_STEPS.md](../docs/WSL2_GPU_STEPS.md)를 따른다.
+
 [Microsoft 공식 설치 안내](https://learn.microsoft.com/en-us/windows/wsl/install)를 따라 관리자 PowerShell에서
 `wsl --install -d Ubuntu-24.04`를 실행하고 필요할 때 직접 재부팅한다.
 현재 세션에서는 관리자 승격이나 자동 재부팅을 하지 않았다. 펌웨어 가상화가 비활성화되어 있으면 먼저 켜야 한다.
