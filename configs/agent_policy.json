@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "deadline_utc": "2026-09-29T01:00:00Z",
+  "stop_after_utc": "2026-09-30T01:00:00Z",
+  "tick_seconds": 20,
+  "backoff": {"base_seconds": 120, "max_seconds": 3600},
+  "roles": {
+    "ultra5060": {
+      "model": null,
+      "effort": "high",
+      "cycle_timeout_minutes": 60,
+      "max_budget_usd_per_cycle": 20,
+      "max_cycles_per_day": 48,
+      "max_usd_per_day": 300,
+      "min_gap_seconds": 60,
+      "heartbeat_minutes": 90
+    },
+    "pro360": {
+      "model": null,
+      "effort": "high",
+      "cycle_timeout_minutes": 45,
+      "max_budget_usd_per_cycle": 15,
+      "max_cycles_per_day": 48,
+      "max_usd_per_day": 200,
+      "min_gap_seconds": 60,
+      "heartbeat_minutes": 90
+    }
+  }
+}

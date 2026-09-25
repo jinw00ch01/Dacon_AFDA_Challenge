@@ -1,5 +1,9 @@
 # Ultra·Pro 에이전트 운영 결정
 
+> **2026-09-25 개정 (사용자 결정):** 아래 "PC별 Codex 작업 하나"는 **PC별 Claude Code 에이전트 + `agent_bridge` 무인 루프**로 대체되었다.
+> 역할(Ultra 총괄·학습, Pro 데이터·검토)과 규약 문서는 유지한다. S2 에이전트 라벨 허용(사람 우선), S1 합성+실촬영, 허용목록+guard 훅, Ultra만 main push를 채택했다.
+> 구현과 운영 방법은 [CLAUDE_OPERATION.md](CLAUDE_OPERATION.md)에 있다. 아래 본문은 결정 경위로 보존한다.
+
 작성: 2026-09-25. 이 문서는 역할과 다음 구현의 명세다. 새 Codex 작업, Claude 호출, 예약 실행, 학습 루프를 이번 문서 작성으로 활성화하지 않는다.
 
 ## 결정

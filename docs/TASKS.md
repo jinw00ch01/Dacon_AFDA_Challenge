@@ -8,8 +8,8 @@
 | H3 완료 | Pro / Ultra | 새 clone·CPU 환경·실물 CPU 검증 | H2 | 2026-09-24 수신 result와 로컬 STATUS.md |
 | H4 실제 왕복 완료 | 양쪽 | Syncthing 자동 전송, 허용 CPU 작업 큐 | H2 | Pro import·미리보기·contract tests 결과; Codex 자동 판단은 별도 |
 | A0 명세 완료 | Ultra | PC별 Codex 역할, 실험 파일 규약, 데이터 게이트 | H4 | AGENT_OPERATING_DECISION.md 및 연결 문서 |
-| A1 구현 대기 | Ultra 구현 / Pro 검증 | 실험 패킷·ACK·장부·고정 commit 실행·중단 복구 | A0 | EXPERIMENT_PROTOCOL.md의 구현 목록과 왕복 검사 |
-| A2 연결 대기 | 각 PC | 로컬 Codex wake·새 결과당 한 번 검토·예산 제한 | A1 및 데이터 게이트 | 재시작/중복/변경 없음 검사; 현재 활성화하지 않음 |
+| A1 구현 완료 | Pro 구현 / 양쪽 검증 | 실험 패킷·ACK·장부·detached job·중단 표시(`agent_bridge`) | A0 | tests/test_agent_bridge.py, test_guard.py; 실제 두 PC 왕복은 Ultra 설정 후 |
+| A2 구현 완료 | 각 PC | Claude Code wake 루프·이유당 1회·예산·guard 훅 | A1 | CLAUDE_OPERATION.md; Pro 설정 완료, Ultra는 설정 명령 1회 필요 |
 | D4 계획 완료 | 사용자 촬영·검수 | 기본390분 + 선별30~45분, S23 Ultra 24원본×2회 | 허용된 영상 확보 | DATA_PREPARATION_SPEC.md; 실제 촬영·라벨은 대기 |
 | L1 안내 완료 | 사용자 관리자 설치 / Ultra 검증 | WSL2 Ubuntu24.04 + CUDA 연산 | Windows 관리자 권한/재부팅 | WSL2_GPU_STEPS.md; 설치와 GPU Linux 실측은 대기 |
 | D0 | Pro 조사 / 사용자 자료 | 공식 데이터 설명·출처 기록 확보; 세부 평가식·자원별 이용조건 보완 | 없음 | data_description.md 및 docs/reference/official_sources_20260923.md |

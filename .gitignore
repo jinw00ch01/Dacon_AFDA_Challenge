@@ -31,6 +31,8 @@ data_description.md
 code submission.html
 sample_*.png
 docs/STATUS.md
+CLAUDE.local.md
+.claude/settings.local.json
 code_analysis.md
 project_plan.md
 developer_job.md

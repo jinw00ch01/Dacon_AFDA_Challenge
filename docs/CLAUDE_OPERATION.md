@@ -1,0 +1,83 @@
+# Claude Code 두 PC 무인 운영
+
+작성: 2026-09-25. [운영 결정](AGENT_OPERATING_DECISION.md)의 "PC별 Codex 작업 하나"를 사용자 결정에 따라 **PC별 Claude Code 에이전트 + `agent_bridge` 루프**로 바꾼다. 규약 문서(EXPERIMENT_PROTOCOL.md, DATA_PREPARATION_SPEC.md)는 그대로 쓰고, 그동안 명세만 있던 A1(패킷·ACK·장부)과 A2(로컬 wake)를 구현했다.
+
+## 구조
+
+```text
+ Ultra (RTX 5060)                                   Pro 360 (CPU)
+ ┌───────────────────────────┐                      ┌───────────────────────────┐
+ │ 작업 스케줄러: 로그인 시    │                      │ 작업 스케줄러: 로그인 시    │
+ │  agent_bridge loop (20초)   │                      │  agent_bridge loop (20초)   │
+ │   ├ 패킷 가져오기·ACK        │   Syncthing          │   ├ 패킷 가져오기·ACK        │
+ │   ├ GPU/CPU job 실행·감시    │ ◄──experiments/v1──► │   ├ CPU job 실행·감시        │
+ │   └ 이유가 있으면 claude -p  │  (spec/result/review │   └ 이유가 있으면 claude -p  │
+ │      (.claude/roles/ultra)  │   decision/qa/req/ack)│      (.claude/roles/pro)    │
+ └───────────────────────────┘                      └───────────────────────────┘
+          코드: GitHub main ← Ultra만 push      Pro: pro/* 브랜치 → Ultra가 병합
+```
+
+- 루프는 가볍다. Claude는 **깨울 이유가 있을 때만** 실행된다: 새 패킷, 끝난 job, 사람·상대가 바꾼 입력, 에이전트가 요청한 재실행(`next_wake`), 90분 heartbeat.
+- 같은 이유는 한 번만 전달된다. 실패한 사이클은 이유를 유지하고 2분부터 최대 1시간까지 간격을 늘려 재시도한다.
+- 10분을 넘는 작업은 Claude 밖의 detached job으로 돌고, 끝나면 다음 사이클을 깨운다. GPU job은 Ultra에서 한 번에 하나이고 commit된 코드에서만 시작한다.
+- 매 사이클은 `--json-schema` 보고서(요약, 행동, 사람 할 일, next_wake, 제출 후보)를 남긴다. 사람 할 일이나 제출 후보가 생기면 Windows 알림과 `work/agent/HUMAN_ACTIONS.md`로 알린다.
+
+## 안전장치
+
+| 장치 | 내용 |
+|---|---|
+| guard 훅 (`.claude/hooks/guard.py`) | 모든 셸·편집 호출 전에 실행한다. force push·기록 삭제, 원본·사람 라벨 삭제/수정, 외부 업로드, 시스템·레지스트리·스케줄러 변경, 전역 pip, Pro의 GPU 실행을 거부한다. 무인 실행에서는 허용목록 밖 프로그램, 자기 정책 수정, 중첩 claude 실행, 서비스 제어도 거부한다. |
+| settings 거부 규칙 | 훅이 실행되지 못해도 원본 경로 편집과 force push를 막는다. 무인 모드의 셸 명령은 훅의 허용이 없으면 자동 거부된다(fail-closed). |
+| 원본 읽기 전용 | 설정 스크립트가 `data/external`, `data/captures`, `Baseline` 파일에 읽기 전용 속성을 건다. |
+| 예산 (`configs/agent_policy.json`) | 사이클당 USD 상한, 하루 사이클 수·USD 상한, 사이클 시간 제한, 마감 뒤 자동 중지(9/30 10:00 KST). PC별 조정은 `configs/local-agent-policy.json`. |
+| 패킷 검사 | UTF-8 strict JSON, 작성 권한(kind별), manifest SHA, 부분 수신 대기, 변조·위장 격리, 실행 파일 첨부 거부. 수신 사본은 읽기 전용이다. |
+
+## PC별 최초 1회 설정
+
+일반 PowerShell에서 실행한다. **Codex 앱 안에서 실행하지 않는다.** 기존 교환 서비스가 Codex 앱의 MSIX 가상화 폴더(`%LOCALAPPDATA%\Packages\OpenAI.Codex_…\LocalCache`)에 설치돼, 로그인 자동 시작이 실제로 등록되지 않았다. 설정 스크립트는 Syncthing 신원(키)을 그대로 옮기므로 장치 재등록이 필요 없다.
+
+먼저 각 PC의 프로젝트 폴더에서 `claude`를 한 번 실행한다. "이 폴더를 신뢰" 질문을 수락하고, 로그인이 만료됐으면 `/login` 한 뒤 `/exit`한다. 신뢰하지 않은 폴더에서는 headless 실행이 프로젝트 훅·권한을 무시하므로 설정 스크립트가 중단된다(종료 코드 2·3과 안내 문구).
+
+```powershell
+# Pro 360
+Set-Location C:\Dacon\Dacon_AFDA_Challenge_git
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_claude_agents.ps1 -Role pro360
+
+# Ultra
+Set-Location C:\Dacon\Dacon_AFDA_Challenge
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_claude_agents.ps1 -Role ultra5060
+```
+
+스크립트가 하는 일: 교환 상태 이전 → `setup_exchange.ps1` 재실행(수신 폴더 versioning 버그 수정) → 교환 서비스를 작업 스케줄러 `AFDA-Exchange-<role>`로 실행 → 원본 읽기 전용 → `CLAUDE.local.md` 역할 연결 → guard·폴더 신뢰·claude 인증 확인 → 작업 스케줄러 `AFDA-Agent-<role>` 등록·시작.
+여러 번 실행해도 안전하다. 관리자 권한은 필요 없다.
+
+전원: 무인 운영 중에는 전원을 연결하고 Windows 절전을 "안 함"으로 설정한다(설정 → 시스템 → 전원). 루프는 실행 중 유휴 절전을 막지만, 덮개를 닫거나 전원 정책으로 인한 절전은 막지 못한다.
+
+## 확인·중지
+
+```powershell
+.\.venv-<role>\Scripts\python.exe -m agent_bridge status      # 루프·사이클·패킷·job·예산
+.\.venv-<role>\Scripts\python.exe -m agent_bridge inbox       # 받은 패킷
+.\.venv-<role>\Scripts\python.exe -m agent_bridge job list
+.\.venv-<role>\Scripts\python.exe -m agent_bridge pause       # 새 사이클 중지 (job은 계속)
+.\.venv-<role>\Scripts\python.exe -m agent_bridge resume
+powershell -File scripts\setup_claude_agents.ps1 -Role <role> -Uninstall   # 루프 작업 제거
+```
+
+기록 위치: `%LOCALAPPDATA%\AFDA\<role>\agent\`(ledger.json, loop.log, cycles/<id>/stdout.json·prompt.md, jobs/<id>/), 프로젝트 `work/agent/last_cycle.json`·`HUMAN_ACTIONS.md`, 각 에이전트의 `docs/STATUS.md`.
+사이클 대화를 직접 보려면 `claude --resume <session_id>`를 쓴다(session_id는 ledger에 있다).
+
+## 사람이 하는 일
+
+1. Ultra에서 위 설정 명령을 1회 실행한다.
+2. 알림이 오면 `work/agent/HUMAN_ACTIONS.md`를 보고 DACON에 zip을 업로드한다. 첫 안전망 zip으로 서버 설치를 조기 검증하는 것을 권장한다.
+3. 선택 작업: 시간이 나면 Nexar CSV에서 라벨을 `reviewed`로 검수하거나 S23 촬영 파일을 `data/captures/s23/`에 넣는다. 루프가 변경을 감지해 반영하고, 사람 라벨이 에이전트 라벨보다 우선한다.
+
+## 알려진 한계
+
+- 두 PC가 켜져 있고 로그인된 동안에만 진행한다. 꺼진 동안의 job은 `lost`로 표시되고 에이전트가 새 job으로 재실행을 판단한다.
+- 에이전트 라벨은 사람 검수보다 부정확할 수 있다. confidence와 출처별 표본 수를 지표와 함께 보고한다.
+- 자체 validation 점수는 공식 점수가 아니다(S2 세부 채점식 미확정). 최종 판단은 DACON 리더보드와 대조한다.
+- WSL2/Linux GPU 최종 재현(S0)은 관리자 설치가 필요해 무인 범위 밖이다. Windows GPU 실측과 정적 검사로 대신하고, 이 점을 위험으로 기록한다.
