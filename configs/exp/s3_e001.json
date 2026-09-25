@@ -1,0 +1,21 @@
+{
+  "_note": "S3 safety-net baseline. Proxy targets (stage3_labels v1b) are self-diagnostic, not official GT. One change vs defaults: kinetics400 backbone init. batch_size/train_stride tuned for RTX 5060 8GB first run; adjust from job logs (OOM -> lower batch_size or window unchanged).",
+  "experiment_id": "s3-e001",
+  "stage": "stage3",
+  "cache_dir": "data/derived/s3_clip_cache_v1",
+  "aux_csv": "data/derived/releases/s3-aux-rules-v1b-20260925/s3_auxiliary_10hz.csv",
+  "rule": {"window": 5, "v_stop": 0.5, "a_db": 0.2, "s_th": 4.5, "bias": -0.3},
+  "epochs": 3,
+  "batch_size": 2,
+  "grad_accum": 4,
+  "lr": 3e-4,
+  "weight_decay": 0.05,
+  "seed": 0,
+  "num_workers": 4,
+  "window": 16,
+  "train_stride": 2,
+  "val_stride": 1,
+  "init_pretrained": true,
+  "amp": true,
+  "out_dir": "models/stage3"
+}

@@ -5,6 +5,7 @@ work/
 runs/
 artifacts/
 cache/
+models/
 Baseline/data/
 Baseline/model/
 Baseline.zip
