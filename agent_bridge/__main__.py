@@ -16,39 +16,45 @@ def _print(value):
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(prog="python -m agent_bridge", description=__doc__)
     parser.add_argument("--config", default=os.environ.get("AFDA_EXCHANGE_CONFIG") or str(ROOT / "configs/local-exchange.json"))
+    # --config is also accepted after the subcommand (older loops put it there); SUPPRESS keeps the top-level value otherwise.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", default=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("loop", help="Run the unattended service loop (used by the scheduled task)")
-    sub.add_parser("tick", help="One loop iteration without starting Claude (debug)")
-    sub.add_parser("status", help="Loop, cycle, packet, job and budget status")
-    sub.add_parser("selftest", help="Check config, policy, guard hook and claude executable")
-    sub.add_parser("probe", help="Run the real headless claude command once with a trivial task (costs cents)")
-    sub.add_parser("inbox", help="List imported packets and their local paths")
-    publish = sub.add_parser("publish", help="Publish a packet from a JSON body (+ optional attachment folder)")
+    for name, text in (("loop", "Run the unattended service loop (used by the scheduled task)"),
+                       ("tick", "One loop iteration without starting Claude (debug)"),
+                       ("status", "Loop, cycle, packet, job and budget status"),
+                       ("selftest", "Check config, policy, guard hook and claude executable"),
+                       ("probe", "Run the real headless claude command once with a trivial task (costs cents)"),
+                       ("inbox", "List imported packets and their local paths"),
+                       ("pause", "Stop starting new cycles (jobs continue)"), ("resume", "Undo pause/stop"),
+                       ("stop", "Ask the loop to exit")):
+        sub.add_parser(name, parents=[common], help=text)
+    publish = sub.add_parser("publish", parents=[common], help="Publish a packet from a JSON body (+ optional attachment folder)")
     publish.add_argument("--kind", required=True, choices=sorted(packets.KINDS - {"ack"}))
     publish.add_argument("--body", required=True, type=Path)
     publish.add_argument("--attach", type=Path)
     publish.add_argument("--target", choices=["ultra5060", "pro360"])
-    job = sub.add_parser("job", help="Queue and inspect detached long jobs")
+    job = sub.add_parser("job", parents=[common], help="Queue and inspect detached long jobs")
     job_sub = job.add_subparsers(dest="job_command", required=True)
-    start = job_sub.add_parser("start")
+    start = job_sub.add_parser("start", parents=[common])
     start.add_argument("--kind", required=True, choices=["cpu", "gpu"])
     start.add_argument("--timeout", required=True, type=float, help="seconds")
     start.add_argument("--name", required=True)
     start.add_argument("--allow-dirty", action="store_true")
     start.add_argument("child", nargs=argparse.REMAINDER)
-    job_sub.add_parser("list")
-    show = job_sub.add_parser("show")
-    show.add_argument("job_id")
-    cancel = job_sub.add_parser("cancel")
-    cancel.add_argument("job_id")
-    run = sub.add_parser("job-run", help=argparse.SUPPRESS)
+    job_sub.add_parser("list", parents=[common])
+    job_sub.add_parser("show", parents=[common]).add_argument("job_id")
+    job_sub.add_parser("cancel", parents=[common]).add_argument("job_id")
+    run = sub.add_parser("job-run", parents=[common], help=argparse.SUPPRESS)
     run.add_argument("--job", required=True)
-    for name in ("pause", "resume", "stop"):
-        sub.add_parser(name)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     cfg = load_config(args.config)
 
     if args.command == "loop":

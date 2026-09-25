@@ -131,6 +131,28 @@ class AgentBridgeTests(unittest.TestCase):
             _, blocked = runner.wake_reasons(self.ultra, policy, book)
         self.assertIn("paused", blocked)
 
+    def test_cli_accepts_config_before_or_after_subcommand(self):
+        from agent_bridge.__main__ import build_parser
+        parser = build_parser()
+        self.assertEqual(parser.parse_args(["job-run", "--config", "X", "--job", "j"]).config, "X")
+        self.assertEqual(parser.parse_args(["--config", "X", "job-run", "--job", "j"]).config, "X")
+        args = parser.parse_args(["--config", "X", "job", "start", "--kind", "gpu", "--timeout", "5", "--name", "t", "--",
+                                  "python", "-m", "afda.train", "--config", "exp.json"])
+        self.assertEqual(args.config, "X")
+        self.assertEqual(args.child[-2:], ["--config", "exp.json"])
+
+    def test_loop_launch_command_parses(self):
+        from unittest.mock import patch
+        from agent_bridge.__main__ import build_parser
+        jobs.request(self.pro, "cpu", 60, "metrics", ["python", "b.py"])
+        with patch.object(jobs.subprocess, "Popen") as popen:
+            popen.return_value.pid = 4242
+            jobs.launch_queued(self.pro, "cfg.json")
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[1:3], ["-m", "agent_bridge"])
+        args = build_parser().parse_args(argv[3:])
+        self.assertEqual((args.command, args.config), ("job-run", "cfg.json"))
+
     def test_job_rules(self):
         with self.assertRaises(ValueError):
             jobs.request(self.pro, "gpu", 60, "train", ["python", "a.py"])
