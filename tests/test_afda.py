@@ -157,6 +157,55 @@ class Stage3LabelRuleTests(unittest.TestCase):
         self.assertEqual(list(out["accel_label"]), ["STOPPED", "STOPPED", "ACCELERATING", "ACCELERATING"])
         self.assertEqual(list(out["steer_label"]), ["STRAIGHT", "STRAIGHT", "RIGHT", "RIGHT"])
 
+    def test_accel_from_speed_series_ramp(self):
+        # +1 m/s per 0.1s step => ~+10 m/s^2 accel -> ACCELERATING once above v_stop.
+        speed = [i * 1.0 for i in range(8)]
+        labels = stage3_labels.accel_from_speed_series(speed)  # default 10Hz spacing
+        self.assertTrue(all(x == "ACCELERATING" for x in labels))  # rising speed, +accel throughout
+        # A rise that starts from rest: the first samples are STOPPED (speed_ma < v_stop).
+        slow_start = stage3_labels.accel_from_speed_series([0.0, 0.0, 0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(slow_start[0], "STOPPED")
+        # A flat sequence sits in the deadband -> CONSTANT (and STOPPED when slow).
+        self.assertEqual(stage3_labels.accel_from_speed_series([20.0] * 6), ["CONSTANT"] * 6)
+        self.assertEqual(stage3_labels.accel_from_speed_series([0.1] * 6), ["STOPPED"] * 6)
+
+
+class Stage3SpeedPostProcessTests(unittest.TestCase):
+    """The e002 accel-from-speed post-processing (Pro packet 824b3122). Feeding the
+    *oracle* true speed through derive_accel_column must reproduce add_labels' accel
+    labels exactly, which pins the gradient/smoothing order the trained head relies on."""
+
+    RELEASE_CSV = ROOT / "data" / "derived" / "releases" / "s3-aux-rules-v1b-20260925" / "s3_auxiliary_10hz.csv"
+
+    def test_grouping_does_not_span_sources(self):
+        pd = __import__("pandas")
+        # B is flat-but-fast; if A's speeds leaked into B's gradient window the last
+        # A row / first B row would misclassify. Per-source grouping prevents that.
+        df = pd.DataFrame(
+            {
+                "source_id": ["A", "A", "A", "B", "B", "B"],
+                "sample_index": [0, 1, 2, 0, 1, 2],
+                "speed_pred": [0.0, 5.0, 10.0, 20.0, 20.0, 20.0],
+            }
+        )
+        labels = stage3_labels.derive_accel_column(df, "speed_pred")
+        self.assertEqual(list(labels[df["source_id"] == "B"]), ["CONSTANT", "CONSTANT", "CONSTANT"])
+
+    def test_oracle_true_speed_reproduces_add_labels(self):
+        pd = __import__("pandas")
+        if not self.RELEASE_CSV.exists():
+            self.skipTest("frozen release CSV not present")
+        df = pd.read_csv(self.RELEASE_CSV)
+        df = df[df["source_id"] != "SRC014"].reset_index(drop=True)  # excluded from GT
+        ref = stage3_labels.add_labels(df)["accel_label"].to_numpy()
+        oracle = df.copy()
+        oracle["speed_pred"] = oracle["speed_mps"]
+        derived = stage3_labels.derive_accel_column(oracle, "speed_pred").to_numpy()
+        for split in ("train", "validation", "test"):
+            mask = (df["split"] == split).to_numpy()
+            acc = float((ref[mask] == derived[mask]).mean())
+            self.assertEqual(acc, 1.0, f"{split} oracle reproduction {acc} != 1.0")
+
 
 if __name__ == "__main__":
     unittest.main()
