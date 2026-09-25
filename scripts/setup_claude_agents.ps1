@@ -46,6 +46,13 @@ if ($Uninstall) {
     exit 0
 }
 if (-not (Test-Path -LiteralPath $python)) { throw "Missing $python. Run scripts/bootstrap.ps1 -Role $Role first." }
+# Shells inside MSIX apps (Codex, Store build of the Claude desktop app) redirect %LOCALAPPDATA% writes
+# into the app sandbox, which would trap the exchange and loop state there. Refuse to run in one.
+$sandbox = (& $python -c "from agent_bridge.state import sandbox_package; print(sandbox_package(r'$realState') or '')").Trim()
+if ($sandbox) {
+    Write-Output "STOP: this shell runs inside the app sandbox '$sandbox'. Open Windows PowerShell from the Start menu and run this script there."
+    exit 4
+}
 
 # 1. Move exchange state out of the Codex MSIX sandbox, keeping the Syncthing identity (no re-pairing).
 $virtual = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -ErrorAction SilentlyContinue |

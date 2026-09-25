@@ -34,7 +34,7 @@
 
 ## PC별 최초 1회 설정
 
-일반 PowerShell에서 실행한다. **Codex 앱 안에서 실행하지 않는다.** 기존 교환 서비스가 Codex 앱의 MSIX 가상화 폴더(`%LOCALAPPDATA%\Packages\OpenAI.Codex_…\LocalCache`)에 설치돼, 로그인 자동 시작이 실제로 등록되지 않았다. 설정 스크립트는 Syncthing 신원(키)을 그대로 옮기므로 장치 재등록이 필요 없다.
+시작 메뉴의 Windows PowerShell에서 실행한다. **Codex 앱이나 스토어(MSIX) 버전 Claude 데스크톱 앱 안의 터미널에서 실행하지 않는다.** 이런 앱 안의 셸은 `%LOCALAPPDATA%`에 새로 쓰는 파일을 앱 샌드박스(`Packages\<앱>\LocalCache`)로 보낸다. 그래서 설정 상태가 샌드박스에 갇히고, 앱 안에서 실행한 `pause`·`resume`·`stop`·`publish`도 실제 루프에 전달되지 않는다(2026-09-25 Ultra에서 확인). setup 스크립트와 상태를 쓰는 agent_bridge 명령은 이를 감지하면 아무것도 바꾸지 않고 멈춘다. Pro의 Claude 앱은 일반 설치본이라 해당하지 않는다. 기존 교환 서비스가 Codex 앱의 MSIX 가상화 폴더(`%LOCALAPPDATA%\Packages\OpenAI.Codex_…\LocalCache`)에 설치돼, 로그인 자동 시작이 실제로 등록되지 않았다. 설정 스크립트는 Syncthing 신원(키)을 그대로 옮기므로 장치 재등록이 필요 없다.
 
 먼저 각 PC의 프로젝트 폴더에서 `claude`를 한 번 실행한다. "이 폴더를 신뢰" 질문을 수락하고, 로그인이 만료됐으면 `/login` 한 뒤 `/exit`한다. 신뢰하지 않은 폴더에서는 headless 실행이 프로젝트 훅·권한을 무시하므로 설정 스크립트가 중단된다(종료 코드 2·3과 안내 문구).
 

@@ -174,6 +174,33 @@ class AgentBridgeTests(unittest.TestCase):
         self.assertIsNone(blocked)
         self.assertTrue(any(r["type"] == "packet" for r in reasons))
 
+    def test_sandbox_detection(self):
+        from unittest.mock import patch
+        import uuid
+        from agent_bridge import state
+        local = self.base / "LocalAppData"
+        state_root = local / "AFDA" / "pro360"
+        (local / "Packages" / "SomeApp" / "LocalCache" / "Local").mkdir(parents=True)
+        self.assertIsNone(state.sandbox_package(state_root, local))
+        self.assertIsNone(state.sandbox_package(self.base / "elsewhere", local))
+        fixed = uuid.UUID(int=7)
+        shadow = local / "Packages" / "Claude_test" / "LocalCache" / "Local" / "AFDA" / "pro360" / f".afda-probe-{fixed.hex}"
+        shadow.parent.mkdir(parents=True)
+        shadow.write_text("probe")  # what a sandbox would have captured
+        with patch.object(state.uuid, "uuid4", return_value=fixed):
+            self.assertEqual(state.sandbox_package(state_root, local), "Claude_test")
+        self.assertFalse(any(state_root.glob(".afda-probe-*")))
+
+    def test_cli_refuses_state_writes_inside_a_sandbox(self):
+        from unittest.mock import patch
+        from agent_bridge import __main__ as cli
+        config = self.base / "local-exchange.json"
+        import sys
+        config.write_text(json.dumps({**self.pro, "python": sys.executable}), encoding="utf-8")
+        with patch.object(cli, "sandbox_package", return_value="Claude_test"), patch.object(cli, "_print"):
+            self.assertEqual(cli.main(["--config", str(config), "pause"]), 2)
+        self.assertFalse((Path(self.pro["state_root"]) / "agent" / "PAUSE").exists())
+
     def test_code_reload_keeps_modules_usable(self):
         runner._reload_code()
         self.assertIsNone(runner.usage_limit_until("all good"))

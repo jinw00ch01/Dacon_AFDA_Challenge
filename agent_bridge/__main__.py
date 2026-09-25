@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 from . import jobs, packets, runner
-from .state import ROOT, agent_root, load_config, load_policy, read_ledger, strict_load
+from .state import ROOT, agent_root, load_config, load_policy, read_ledger, sandbox_package, strict_load
 
 
 def _print(value):
@@ -56,6 +56,13 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config)
+    writes_state = args.command in {"loop", "tick", "publish", "pause", "resume", "stop"} or (
+        args.command == "job" and args.job_command in {"start", "cancel"})
+    package = sandbox_package(cfg["state_root"]) if writes_state else None
+    if package:
+        _print({"error": f"이 셸은 앱 샌드박스({package}) 안에서 실행 중이라, 상태 파일이 실제 루프에 전달되지 않습니다. "
+                         "시작 메뉴의 Windows PowerShell에서 다시 실행하세요.", "command": args.command})
+        return 2
 
     if args.command == "loop":
         runner.loop(cfg, args.config)

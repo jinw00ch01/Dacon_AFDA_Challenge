@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import uuid
 
 from exchange_bridge.__main__ import atomic_json, digest, dirs, load_config, safe_path  # noqa: F401
 from exchange_bridge.transport import FOLDERS
@@ -70,6 +71,30 @@ def load_policy(role):
     if local.exists():
         merged["role"].update(strict_load(local).get(role, {}))
     return merged
+
+
+def sandbox_package(state_root, local=None):
+    """Name of the app package whose sandbox captures writes to state_root, else None.
+
+    Shells inside MSIX apps (Codex, the Store build of the Claude desktop app) silently redirect new
+    files under %LOCALAPPDATA% to Packages\\<pkg>\\LocalCache, so the real loop never sees them.
+    GetPackageFullName does not reveal this for child processes, so write a probe and look for it.
+    """
+    local = Path(local or os.environ.get("LOCALAPPDATA") or "")
+    root = Path(state_root)
+    if not str(local) or not root.is_relative_to(local) or not (local / "Packages").is_dir():
+        return None
+    root.mkdir(parents=True, exist_ok=True)
+    probe = root / f".afda-probe-{uuid.uuid4().hex}"
+    probe.write_text("probe", encoding="utf-8")
+    try:
+        relative = probe.relative_to(local)
+        for package in (local / "Packages").iterdir():
+            if (package / "LocalCache" / "Local" / relative).exists():
+                return package.name
+        return None
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def agent_root(cfg):
