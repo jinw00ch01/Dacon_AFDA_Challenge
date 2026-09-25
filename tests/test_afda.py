@@ -21,7 +21,7 @@ if str(ROOT / "src") not in sys.path:
 
 from harness.__main__ import check_source
 from harness.contracts import SCHEMAS, validate
-from afda import preprocess, models
+from afda import preprocess, models, stage3_labels
 
 
 def _load_submission():
@@ -116,6 +116,46 @@ class PredictOutputValidatesTests(unittest.TestCase):
 
         s3 = [{"ID": "vid", "sample_index": i, "accel_label": "CONSTANT", "steer_label": "STRAIGHT"} for i in range(3)]
         validate("stage3", SCHEMAS["stage3"], s3, {"vid": 3})
+
+
+class Stage3LabelRuleTests(unittest.TestCase):
+    """Data-free checks of the S3 proxy label logic (full-count reproduction lives
+    in scripts/verify_s3_labels.py which needs the frozen release CSV)."""
+
+    R = stage3_labels.DEFAULT_RULE
+
+    def test_accel_thresholds(self):
+        a = lambda s, ac: stage3_labels.classify_accel(s, ac, self.R["v_stop"], self.R["a_db"])
+        self.assertEqual(a(0.2, 5.0), "STOPPED")       # below v_stop wins over accel
+        self.assertEqual(a(10.0, 0.5), "ACCELERATING")
+        self.assertEqual(a(10.0, -0.5), "DECELERATING")
+        self.assertEqual(a(10.0, 0.1), "CONSTANT")     # inside +-a_db deadband
+        self.assertEqual(a(10.0, 0.2), "CONSTANT")     # boundary is not strictly greater
+
+    def test_steer_sign_and_mask(self):
+        s = lambda st, stopped: stage3_labels.classify_steer(st, self.R["bias"], self.R["s_th"], stopped)
+        # bias -0.3: centered = angle + 0.3. Positive centered => LEFT.
+        self.assertEqual(s(10.0, False), "LEFT")
+        self.assertEqual(s(-10.0, False), "RIGHT")
+        self.assertEqual(s(0.0, False), "STRAIGHT")
+        self.assertEqual(s(10.0, True), "STRAIGHT")    # STOPPED masks steering
+        self.assertTrue(stage3_labels.POSITIVE_STEER_IS_LEFT)
+
+    def test_add_labels_grouping(self):
+        # Uniform values per source so the centered moving average is a no-op.
+        pd = __import__("pandas")
+        df = pd.DataFrame(
+            {
+                "source_id": ["A", "A", "B", "B"],
+                "speed_mps": [0.1, 0.1, 20.0, 20.0],
+                "steering_angle_deg": [20.0, 20.0, -20.0, -20.0],
+                "acceleration_mps2_proxy": [1.0, 1.0, 1.0, 1.0],
+            }
+        )
+        out = stage3_labels.add_labels(df)
+        # Source A is below v_stop -> STOPPED and steer-masked to STRAIGHT.
+        self.assertEqual(list(out["accel_label"]), ["STOPPED", "STOPPED", "ACCELERATING", "ACCELERATING"])
+        self.assertEqual(list(out["steer_label"]), ["STRAIGHT", "STRAIGHT", "RIGHT", "RIGHT"])
 
 
 if __name__ == "__main__":
