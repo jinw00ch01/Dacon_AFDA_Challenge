@@ -34,7 +34,6 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -65,44 +64,42 @@ def assign_splits(df: pd.DataFrame, val_frac: float = 0.2, seed: int = 0) -> pd.
     return split
 
 
-class _FrameSet(Dataset):
-    def __init__(self, frames, transform):
-        self.frames, self.transform = frames, transform
+def extract(video_path, backbone, transform, device, batch_size):
+    """Stream-decode with cv2 and encode in batches.
 
-    def __len__(self):
-        return len(self.frames)
+    We never hold the whole raw-frame list in memory (a Nexar clip is
+    ~1280x720x3 x hundreds of frames; keeping all frames -- and, worse, copying
+    them into DataLoader worker processes under Windows spawn -- blew past the
+    16 GiB RAM budget). Instead we read one frame at a time, transform it, and
+    flush a fixed-size batch through the backbone, so peak RAM is bounded by
+    ``batch_size`` transformed tensors plus the growing (T,512) feature list.
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    feats, batch, n = [], [], 0
 
-    def __getitem__(self, index):
-        return self.transform(Image.fromarray(self.frames[index]))
+    def flush():
+        x = torch.stack(batch).to(device, non_blocking=True)
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=(device.type == "cuda")):
+            out = backbone(x)
+        feats.append(out.float().cpu())
+        batch.clear()
 
-
-def decode_frames(path: Path):
-    cap = cv2.VideoCapture(str(path))
-    frames = []
-    while True:
-        ok, bgr = cap.read()
-        if not ok:
-            break
-        frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    cap.release()
-    return frames
-
-
-def extract(video_path, backbone, transform, device, batch_size, workers):
-    frames = decode_frames(video_path)
-    if not frames:
-        raise ValueError(f"cannot decode {video_path.name}")
-    loader = DataLoader(
-        _FrameSet(frames, transform), batch_size=batch_size, shuffle=False,
-        num_workers=workers, pin_memory=(device.type == "cuda"),
-    )
-    feats = []
     with torch.inference_mode():
-        for images in loader:
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=(device.type == "cuda")):
-                out = backbone(images.to(device, non_blocking=True))
-            feats.append(out.float().cpu())
-    return torch.cat(feats).to(torch.float16).numpy(), len(frames)
+        while True:
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            batch.append(transform(Image.fromarray(rgb)))
+            n += 1
+            if len(batch) >= batch_size:
+                flush()
+        if batch:
+            flush()
+    cap.release()
+    if not feats:
+        raise ValueError(f"cannot decode {video_path.name}")
+    return torch.cat(feats).to(torch.float16).numpy(), n
 
 
 def sha256(path: Path) -> str:
@@ -128,8 +125,7 @@ def main() -> int:
         default="data/derived/releases/s2-labels-v6-20260925/stage2_merged_v6.csv",
     )
     ap.add_argument("--out-dir", default="data/derived/s2_feat_cache_v1")
-    ap.add_argument("--batch-size", type=int, default=256)
-    ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--batch-size", type=int, default=128)
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="cache only N videos (smoke)")
@@ -171,7 +167,7 @@ def main() -> int:
     for _, row in df.iterrows():
         vid = row["video_id"]
         src = ROOT / row["source_path"]
-        feats, n_dec = extract(src, backbone, transform, device, args.batch_size, args.num_workers)
+        feats, n_dec = extract(src, backbone, transform, device, args.batch_size)
         npy = out_dir / f"{vid}.npy"
         np.save(npy, feats)
         recorded = int(float(row["decoded_frames"]))
