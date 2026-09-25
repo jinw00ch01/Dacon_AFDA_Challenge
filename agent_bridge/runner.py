@@ -557,7 +557,20 @@ def _code_stamp():
 def _reload_code():
     """Pick up new agent_bridge code between cycles. Restarting the scheduled task would kill
     running jobs and cycles (they share its job object). The running loop() body stays old, but
-    every function it calls is looked up in the reloaded module namespaces."""
+    every function it calls is looked up in the reloaded module namespaces.
+
+    Agents may edit this code, and a reload reaches both PCs, so only code that passes the loop's
+    own tests is loaded; otherwise the running code stays and the error is logged."""
+    import sys
+    check = subprocess.run([sys.executable, "-m", "unittest", "tests.test_agent_bridge", "tests.test_guard"], cwd=ROOT,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+                           creationflags=0x08000000 if os.name == "nt" else 0)
+    if check.returncode:
+        raise RuntimeError("new agent_bridge code failed tests; keeping the running code: " + check.stderr[-600:])
+    _reload_modules()
+
+
+def _reload_modules():
     import importlib
     import sys
     for name in ("agent_bridge.state", "agent_bridge.packets", "agent_bridge.jobs", "agent_bridge.runner"):

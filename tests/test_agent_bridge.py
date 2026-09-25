@@ -248,7 +248,7 @@ class AgentBridgeTests(unittest.TestCase):
         self.assertFalse((Path(self.pro["state_root"]) / "agent" / "PAUSE").exists())
 
     def test_code_reload_keeps_modules_usable(self):
-        runner._reload_code()
+        runner._reload_modules()  # _reload_code() would run this test file again before reloading
         self.assertIsNone(runner.usage_limit_until("all good"))
         self.assertTrue(callable(runner.jobs.launch_queued))
 

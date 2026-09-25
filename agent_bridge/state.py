@@ -157,19 +157,34 @@ def _file_lock(path, wait_seconds=60):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _retry(action, attempts=25, delay=0.2):
+    """Windows briefly refuses to replace a file another process is reading (and to read one being
+    replaced). Lock-free readers such as `status` make that race possible, so retry for a few seconds."""
+    for attempt in range(attempts):
+        try:
+            return action()
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
+def _load_ledger(path):
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else json.loads(json.dumps(EMPTY_LEDGER))
+
+
 @contextmanager
 def ledger(cfg):
     """Read-modify-write the ledger under an OS lock shared by loop and CLI calls."""
     root = agent_root(cfg)
     path = root / "ledger.json"
     with _file_lock(root / "ledger.lock"):
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else json.loads(json.dumps(EMPTY_LEDGER))
+        data = _retry(lambda: _load_ledger(path))
         for key, value in EMPTY_LEDGER.items():
             data.setdefault(key, json.loads(json.dumps(value)))
         yield data
-        atomic_json(path, data)
+        _retry(lambda: atomic_json(path, data))
 
 
 def read_ledger(cfg):
-    path = agent_root(cfg) / "ledger.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else json.loads(json.dumps(EMPTY_LEDGER))
+    return _retry(lambda: _load_ledger(agent_root(cfg) / "ledger.json"))
