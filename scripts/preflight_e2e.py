@@ -17,7 +17,6 @@ any contract break.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import shutil
 import sys
@@ -31,11 +30,16 @@ from harness.contracts import validate  # noqa: E402
 
 
 def _load_submission():
-    path = ROOT / "submission" / "inference.py"
-    spec = importlib.util.spec_from_file_location("afda_submission_inference", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    # Import by a stable module name on sys.path (not importlib-from-path) so
+    # DataLoader workers spawned on Windows can re-import the Dataset classes;
+    # multiprocessing propagates sys.path to children. On the Linux eval server
+    # the module is imported the same way.
+    sub_dir = str(ROOT / "submission")
+    if sub_dir not in sys.path:
+        sys.path.insert(0, sub_dir)
+    import inference  # noqa: E402  (submission/inference.py)
+
+    return inference
 
 
 def _decode_count(path: Path) -> int:
