@@ -21,6 +21,12 @@
 5. **Git: Ultra만 main에 push한다.** Pro는 `pro/<topic>` 브랜치를 worktree(`../Dacon_AFDA_Challenge_wt/<topic>`)에서 만들어 push하고, Ultra가 검토 후 병합한다.
 6. **마감: 제출 2026-09-29 10:00 KST (01:00Z).** 에이전트는 업로드하지 않는다. 검증된 zip을 만들고 `submission_candidate`로 보고한다.
 7. 라벨링용 프레임은 640px 이하로 줄여 Claude(Anthropic API)에만 보여 준다. 그 밖의 외부 서비스로 영상·프레임·라벨을 보내지 않는다.
+8. **데이터 확장(14:20 승인).** 안전망 v001은 지금 데이터로 먼저 만든다. 확장은 GPU 학습과 병행해 준비하고, v002 이후 버전에 반영한다.
+   - **S3:** comma2k19를 약 3~4시간(약 200구간)으로 늘린다. 센서 로그를 먼저 받아 정지·회전·가감속이 많은 구간을 고르고, origin_group(주행) 단위 split을 유지한다. 기존 validation 4개 source는 e001과 비교하는 고정 기준으로 남긴다.
+   - **S2:** Nexar train positive를 약 300개 더 받는다. HF 인증은 Ultra에만 있다. 충돌 시점은 Nexar `time_of_event`로 만든다. 근거: 에이전트 라벨 59개와 비교했을 때 오차 중앙값이 0.09초이고, 52개가 0.5초 이내다. `label_source=nexar_event`로 표시하고, 접촉을 확인하기 전에는 `contact_unverified`로 둔다. 진입 시점·방향·회피 공간은 Pro가 차선 진입 사례 위주로 라벨한다.
+   - **S1:** 확장된 comma 구간에서 새 source를 골라 합성 재촬영 source를 약 100개로 늘린다.
+   - **수집 스크립트:** 기존 상한(Nexar positive 100개, comma 24개·날짜당 1구간)은 이 범위까지 올려도 된다. 고정 revision과 SHA 기록, 라이선스 원문 보관은 지킨다.
+   - **Pro 디스크:** 여유는 약 24GB다. Pro로 보내는 영상은 원본과 디코드 프레임 수가 같은 640px 사본으로 만들고, 프레임 수 일치를 확인해 보낸다. Pro는 새 데이터를 합계 8GB 이하로 유지한다.
 
 ## 공통 실행 규칙
 

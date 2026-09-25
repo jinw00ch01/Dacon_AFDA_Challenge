@@ -15,6 +15,20 @@ docs/threads/ULTRA_THREAD.md의 채택 기준·중지 조건은 유지한다. �
 
 v001이 나오면 `human_actions`에 "DACON에 submit_v001.zip 업로드해 서버 설치·실행 검증"을 넣는다. 설치 오류는 제출 횟수에서 차감되지 않는다.
 
+## 데이터 확장 (CLAUDE.md 결정 8, 9/25 14:20 승인)
+
+A 단계(v001)를 늦추지 않는다. GPU가 S2·S1을 학습하는 동안 CPU·네트워크로 확장을 준비하고, 준비된 것부터 v002 후보 실험에 쓴다.
+
+| 순서 | 작업 | 산출물·완료 조건 |
+|---|---|---|
+| 1 | comma2k19 확장: 센서 로그를 먼저 받아 구간별 정지·회전·가감속 비율을 계산하고, 약 200구간(3~4시간)을 골라 영상을 받는다 | release `s3-aux-v2`(10Hz CSV, split, 시간축 QA). 기존 val 4개 source는 그대로 두고, 새 주행은 origin_group 단위로 split을 배정한다 |
+| 2 | S3 e002: 확장 데이터로 재학습 | 고정 기준(기존 val 4개 source)과 새 val 두 가지로 보고한다. e001보다 좋아지면 채택한다 |
+| 3 | Nexar positive 약 300개 추가(고정 revision) | `nexar_event` 충돌 라벨(time_of_event × fps, `contact_unverified`). 원본과 프레임 수가 같은 640px 사본을 Pro에 `request` 패킷으로 배치 전송한다(패킷당 4GiB 이하) |
+| 4 | S2 재학습: 에이전트 라벨 + `nexar_event` 라벨 | 라벨 출처별 수와 검증 지표. Pro의 접촉·진입 라벨이 오면 release를 갱신한다 |
+| 5 | 새 comma 구간에서 S1용 10초 재생 클립 약 76개 생성 → Pro에 `request`로 전송 | Pro가 합성해 `qa`로 보내면 S1을 재학습한다 |
+
+확장 데이터 재학습은 9/28 18:00까지 끝내고, C 단계(22:00 동결)에서 기준 모델과 비교해 고른다. 다운로드가 늦어지면 받은 만큼으로 진행한다.
+
 ## 권장 출발점 (근거가 나오면 바꿔도 된다)
 
 - 공통: `src/afda/`에 디코딩·전처리를 학습과 추론이 함께 쓰는 모듈로 만든다(CODE_REVIEW.md의 학습/추론 불일치 지적 참고). 노트북 원본 `src/baseline_inference.py`는 수정하지 않는다.
