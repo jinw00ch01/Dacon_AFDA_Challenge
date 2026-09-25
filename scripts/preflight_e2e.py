@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -27,6 +29,23 @@ import cv2
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from harness.contracts import validate  # noqa: E402
+
+
+def _force_rmtree(path: Path) -> None:
+    """rmtree that tolerates read-only files on Windows.
+
+    prepare_stage1/3 copy2 the Baseline mp4s, which are read-only; copy2
+    preserves the read-only bit, so a plain rmtree on the next run raises
+    PermissionError [WinError 5]. Clear the write bit on every entry first.
+    """
+    if not path.exists():
+        return
+    for child in path.rglob("*"):
+        try:
+            os.chmod(child, stat.S_IWRITE)
+        except OSError:
+            pass
+    shutil.rmtree(path)
 
 
 def _load_submission():
@@ -111,8 +130,7 @@ def main():
 
     inference = _load_submission()
     out = args.out
-    if out.exists():
-        shutil.rmtree(out)
+    _force_rmtree(out)
     out.mkdir(parents=True)
 
     summary = {}
