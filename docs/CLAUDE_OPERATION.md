@@ -21,6 +21,7 @@
 - 같은 이유는 한 번만 전달된다. 실패한 사이클은 이유를 유지하고 2분부터 최대 1시간까지 간격을 늘려 재시도한다.
 - 10분을 넘는 작업은 Claude 밖의 detached job으로 돌고, 끝나면 다음 사이클을 깨운다. GPU job은 Ultra에서 한 번에 하나이고 commit된 코드에서만 시작한다.
 - 매 사이클은 `--json-schema` 보고서(요약, 행동, 사람 할 일, next_wake, 제출 후보)를 남긴다. 사람 할 일이나 제출 후보가 생기면 Windows 알림과 `work/agent/HUMAN_ACTIONS.md`로 알린다.
+- 보고서 도구 호출이 깨져 CLI가 `error_max_structured_output_retries`로 끝나면(다른 항목이 `summary` 안으로 새는 현상), 루프가 세션 기록(`~/.claude/projects/*/<session_id>.jsonl`)의 마지막 보고서 시도를 복구해 검증하고, 통과하면 성공으로 처리한다(`report_salvaged: true`, loop.log에 기록). 이 현상을 줄이려고 스키마에서 `summary`를 마지막 항목으로 둔다.
 
 ## 안전장치
 

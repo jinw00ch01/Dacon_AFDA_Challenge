@@ -120,6 +120,52 @@ class AgentBridgeTests(unittest.TestCase):
             _, blocked = runner.wake_reasons(self.pro, policy, book)
         self.assertIn("backoff", blocked)
 
+    def test_repair_report_undoes_leaked_fields(self):
+        self.assertEqual(list(runner.REPORT_SCHEMA["properties"])[-1], "summary")  # nothing left for summary to swallow
+        tagged = {"summary": "요약 done</summary>\n<actions>[\"a\", \"b\"]</actions>\n<human_actions>[]</human_actions>\n"
+                             "<next_wake><mode>after_minutes</mode><minutes>30</minutes><reason>wait</reason></next_wake>"}
+        self.assertEqual(runner.repair_report(tagged), {"summary": "요약 done", "actions": ["a", "b"], "human_actions": [],
+                                                        "next_wake": {"mode": "after_minutes", "minutes": 30, "reason": "wait"}})
+        partial = {"summary": "done</summary>\n<parameter name=\"actions\">[\"x\"]", "human_actions": ["upload"],
+                   "next_wake": {"mode": "asap", "reason": "r"}}
+        self.assertEqual(runner.repair_report(partial)["actions"], ["x"])
+        self.assertEqual(runner.repair_report(partial)["human_actions"], ["upload"])
+        self.assertIsNone(runner.repair_report({"summary": "nothing leaked"}))
+        self.assertIsNone(runner.repair_report({}))
+
+    def test_structured_output_failure_is_salvaged_from_transcript(self):
+        import os
+        from unittest.mock import patch
+        policy = load_policy("pro360")
+        packets.publish(self.ultra, "request", {"subject": "x"})
+        packets.import_inbox(self.pro)
+        with ledger(self.pro) as book:
+            reasons, _ = runner.wake_reasons(self.pro, policy, book)
+        config_dir = self.base / "claude-config"
+        transcript = config_dir / "projects" / "C--proj" / "s-1.jsonl"
+        transcript.parent.mkdir(parents=True)
+        leaked = {"summary": "작업 완료</summary>\n<parameter name=\"actions\">[\"froze v6\"]", "human_actions": [],
+                  "next_wake": {"mode": "on_event", "reason": "wait"}}
+        attempt = lambda data: {"type": "assistant", "message": {"content": [  # noqa: E731
+            {"type": "tool_use", "name": "StructuredOutput", "input": data}]}}
+        rejected = {"type": "user", "message": {"content": [{"type": "tool_result", "is_error": True, "content": "schema"}]}}
+        transcript.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in (attempt(leaked), rejected, attempt({}))),
+                              encoding="utf-8")
+        (self.base / "stdout.json").write_text(json.dumps({"is_error": True, "subtype": "error_max_structured_output_retries",
+                                                           "session_id": "s-1", "total_cost_usd": 2}), encoding="utf-8")
+        record = {"cycle_id": "c1", "folder": str(self.base), "reasons": reasons, "started_utc": utc_text()}
+        with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(config_dir)}), patch.object(runner, "notify"):
+            entry = runner.finish_cycle(self.pro, policy, record, 1)
+            self.assertEqual((entry["status"], entry.get("report_salvaged")), ("succeeded", True))
+            self.assertEqual(entry["report"]["actions"], ["froze v6"])
+            book = read_ledger(self.pro)
+            self.assertEqual(book["failures"], 0)
+            self.assertTrue(all(e["handled"] for e in book["packets"].values() if e["kind"] == "request"))
+            transcript.write_text(json.dumps(attempt({})), encoding="utf-8")  # nothing recoverable: still a failure
+            failed = runner.finish_cycle(self.pro, policy, {**record, "cycle_id": "c2"}, 1)
+        self.assertEqual(failed["status"], "error_max_structured_output_retries")
+        self.assertEqual(read_ledger(self.pro)["failures"], 1)
+
     def test_budget_and_pause_block_cycles(self):
         policy = load_policy("ultra5060")
         with ledger(self.ultra) as book:

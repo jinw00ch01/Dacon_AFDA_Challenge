@@ -24,34 +24,39 @@ WATCH = {
                "data/derived/comma_subset_v1/s23_capture_ready.csv", "data/captures/s23", "data/derived/labels/human"],
     "ultra5060": ["data/derived/peer_reviews/latest.json", "data/derived/labels/human"],
 }
+# `summary` comes last on purpose: the observed tool-call glitch closes the long summary with a wrong tag, and
+# every field after it then leaks into the summary string. With summary last there is nothing left to swallow.
 REPORT_SCHEMA = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string", "description": "What changed this cycle, with evidence paths"},
-        "actions": {"type": "array", "items": {"type": "string"}},
-        "packets_published": {"type": "array", "items": {"type": "string"}},
-        "jobs_requested": {"type": "array", "items": {"type": "string"}},
-        "human_actions": {"type": "array", "items": {"type": "string"},
-                          "description": "Only things a human must physically do (upload, capture, admin install)"},
-        "blocked": {"type": "array", "items": {"type": "string"}},
         "next_wake": {
             "type": "object",
             "properties": {"mode": {"type": "string", "enum": ["asap", "on_event", "after_minutes"]},
                            "minutes": {"type": ["integer", "null"]}, "reason": {"type": "string"}},
             "required": ["mode", "reason"],
         },
+        "human_actions": {"type": "array", "items": {"type": "string"},
+                          "description": "Only things a human must physically do (upload, capture, admin install)"},
+        "actions": {"type": "array", "items": {"type": "string"}},
+        "packets_published": {"type": "array", "items": {"type": "string"}},
+        "jobs_requested": {"type": "array", "items": {"type": "string"}},
+        "blocked": {"type": "array", "items": {"type": "string"}},
         "submission_candidate": {
             "type": ["object", "null"],
             "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}, "evidence": {"type": "string"}},
         },
+        "summary": {"type": "string",
+                    "description": "What changed this cycle, with evidence paths. Plain Korean text under 600 characters"},
     },
-    "required": ["summary", "actions", "human_actions", "next_wake"],
+    "required": ["next_wake", "human_actions", "actions", "summary"],
 }
 AUTONOMY_NOTE = (
     "You are running UNATTENDED as the AFDA {role} agent (cycle {cycle}). No human will read or answer "
     "questions during this run: never ask for confirmation, decide within the rules in CLAUDE.md and your role file, "
     "and record anything that truly needs a human in human_actions. Keep every shell command under 10 minutes; "
-    "queue longer work with `python -m agent_bridge job start`. Finish by returning the JSON report."
+    "queue longer work with `python -m agent_bridge job start`. Finish by calling the StructuredOutput tool once, "
+    "with every report field as its own JSON property (never embed other fields inside summary) and summary under "
+    "600 characters. Write summary and human_actions in Korean unless the task dictates exact text."
 )
 
 
@@ -293,6 +298,83 @@ def _kill_tree(pid):
         pass
 
 
+def _schema_ok(value, schema):
+    """The subset of JSON Schema that REPORT_SCHEMA uses: type, enum, required, properties, items."""
+    kinds = schema.get("type")
+    kinds = kinds if isinstance(kinds, list) else [kinds] if kinds else []
+    checks = {"object": lambda v: isinstance(v, dict), "array": lambda v: isinstance(v, list),
+              "string": lambda v: isinstance(v, str), "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+              "null": lambda v: v is None}
+    if kinds and not any(checks[kind](value) for kind in kinds):
+        return False
+    if "enum" in schema and value not in schema["enum"]:
+        return False
+    if isinstance(value, dict):
+        return (all(key in value for key in schema.get("required", []))
+                and all(_schema_ok(value[key], sub) for key, sub in schema.get("properties", {}).items() if key in value))
+    if isinstance(value, list) and "items" in schema:
+        return all(_schema_ok(item, schema["items"]) for item in value)
+    return True
+
+
+LEAKED_PARAMETER = re.compile(r'<parameter name="(\w+)">(.*?)(?:</parameter>|(?=<parameter name=")|\Z)', re.S)
+
+
+def _leaked_value(text, schema):
+    text = text.strip()
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+    if schema.get("type") == "object" and isinstance(value, str):
+        fields = {k: v.strip() for k, v in re.findall(r"<(\w+)>(.*?)</\1>", value, re.S)}
+        value = {k: int(v) if v.isdigit() else v for k, v in fields.items()} or value
+    return value
+
+
+def repair_report(data):
+    """Undo the StructuredOutput glitch where fields leak into a string as XML-ish markup, e.g.
+    {"summary": "...</summary>\\n<parameter name=\\"actions\\">[...]"}. Proper keys win; None unless valid."""
+    if not isinstance(data, dict):
+        return None
+    properties = REPORT_SCHEMA["properties"]
+    names = "|".join(properties)
+    fixed = dict(data)
+    for key, value in data.items():
+        if not isinstance(value, str):
+            continue
+        schema = properties.get(key, {})
+        cut = re.search(rf"</{re.escape(key)}>|</parameter>|<parameter name=\"|<({names})>", value)
+        head, rest = (value[:cut.start()], value[cut.start():]) if cut else (value, "")
+        fixed[key] = head.strip() if schema.get("type") == "string" else _leaked_value(head, schema)
+        for name, text in LEAKED_PARAMETER.findall(rest) + re.findall(rf"<({names})>(.*?)</\1>", rest, re.S):
+            if name in properties and name not in data:
+                fixed[name] = _leaked_value(text, properties[name])
+    return fixed if _schema_ok(fixed, REPORT_SCHEMA) else None
+
+
+def salvage_report(session_id):
+    """Recover the report after `claude -p` gave up with error_max_structured_output_retries. The cycle's
+    work is done by then; the StructuredOutput attempts sit in the session transcript, newest last."""
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    path = next(base.glob(f"*/{session_id}.jsonl"), None) if session_id else None
+    if path is None:
+        return None
+    for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+        if '"StructuredOutput"' not in line:
+            continue
+        try:
+            content = (json.loads(line).get("message") or {}).get("content") or []
+        except ValueError:
+            continue
+        for block in reversed(content if isinstance(content, list) else []):
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                report = repair_report(block.get("input"))
+                if report:
+                    return report
+    return None
+
+
 def finish_cycle(cfg, policy, record, returncode, timed_out=False):
     folder = Path(record["folder"])
     raw = (folder / "stdout.json").read_text(encoding="utf-8", errors="replace").strip()
@@ -304,7 +386,11 @@ def finish_cycle(cfg, policy, record, returncode, timed_out=False):
     report = result.get("structured_output")
     if report is None and isinstance(result.get("result"), dict):
         report = result["result"]
-    ok = returncode == 0 and not timed_out and not result.get("is_error") and isinstance(report, dict)
+    salvaged = False
+    if not isinstance(report, dict) and not timed_out and result.get("subtype") == "error_max_structured_output_retries":
+        report = salvage_report(result.get("session_id") or record.get("session_id"))
+        salvaged = isinstance(report, dict)
+    ok = not timed_out and isinstance(report, dict) and (salvaged or (returncode == 0 and not result.get("is_error")))
     status = "succeeded" if ok else ("timed_out" if timed_out else (result.get("subtype") or f"exit_{returncode}"))
     cost = float(result.get("total_cost_usd") or 0.0)
     now = utc_now()
@@ -341,9 +427,13 @@ def finish_cycle(cfg, policy, record, returncode, timed_out=False):
                  "num_turns": result.get("num_turns"), "report": report if ok else None,
                  "error": None if ok else (result.get("result") if isinstance(result.get("result"), str) else raw[-2000:])}
         entry.pop("pid", None)
+        if salvaged:
+            entry["report_salvaged"] = True
         book["cycles"].append(entry)
         book["cycles"] = book["cycles"][-200:]
         book.pop("active_cycle", None)
+    if salvaged:
+        _log(agent_root(cfg) / "loop.log", f"cycle {record['cycle_id']}: report recovered from the session transcript")
     atomic_json(folder / "cycle.json", entry)
     atomic_json(Path(cfg["project_root"]) / "work" / "agent" / "last_cycle.json", entry)
     if ok and (report.get("human_actions") or report.get("submission_candidate")):
