@@ -6,7 +6,7 @@ once; a failed cycle keeps its reasons and retries with exponential backoff.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -97,6 +97,41 @@ def watch_inputs(cfg, book, stable_seconds=60):
     return changed
 
 
+LIMIT_TEXT = re.compile(r"usage limit|hit your (\w+ )?limit|limit (reached|resets)|resets_at", re.I)
+
+
+def usage_limit_until(text, now=None, local_tz=None):
+    """If `text` reports a subscription usage limit, return the UTC time to retry (else None).
+
+    Understands `...|<epoch>`, `resets_at: <epoch>`, `resets in 2h 15m`, `resets 3pm`, `resets Sep 26, 3:30pm`.
+    Unknown formats wait 30 minutes; the retry itself is free if the limit still applies.
+    """
+    if not text or not LIMIT_TEXT.search(text):
+        return None
+    now = now or utc_now()
+    local_tz = local_tz or datetime.now().astimezone().tzinfo
+    epoch = re.search(r"(?:\||resets_at\D{0,4})(\d{10})\b", text)
+    if epoch:
+        return max(now, datetime.fromtimestamp(int(epoch.group(1)), timezone.utc)) + timedelta(minutes=1)
+    relative = re.search(r"resets in (?:(\d+)\s*h\w*)?\s*(?:(\d+)\s*m)?", text, re.I)
+    if relative and (relative.group(1) or relative.group(2)):
+        return now + timedelta(hours=int(relative.group(1) or 0), minutes=int(relative.group(2) or 0) + 1)
+    clock = re.search(r"resets (?:at |on )?(?:([A-Z][a-z]{2}) (\d{1,2}),? (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)?", text, re.I)
+    if clock:
+        hour, minute = int(clock.group(3)), int(clock.group(4) or 0)
+        if clock.group(5):
+            hour = hour % 12 + (12 if clock.group(5).lower() == "pm" else 0)
+        local_now = now.astimezone(local_tz)
+        target = local_now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
+        if clock.group(1):
+            month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].index(clock.group(1).lower()[:3]) + 1
+            target = target.replace(month=month, day=int(clock.group(2)))
+        while target <= local_now:
+            target += timedelta(days=1)
+        return target.astimezone(timezone.utc) + timedelta(minutes=1)
+    return now + timedelta(minutes=30)
+
+
 def _allowed_after(book, policy):
     backoff = policy.get("backoff", {})
     if not book["failures"] or not book["cycles"]:
@@ -114,6 +149,8 @@ def wake_reasons(cfg, policy, book):
         return [], "competition window closed"
     if (agent_root(cfg) / "PAUSE").exists():
         return [], "paused by PAUSE file"
+    if book.get("limit_until_utc") and now < parse_utc(book["limit_until_utc"]):
+        return [], f"usage limit until {book['limit_until_utc']}"
     today = book["budget"].setdefault(now.strftime("%Y-%m-%d"), {"cycles": 0, "usd": 0.0})
     if today["cycles"] >= role["max_cycles_per_day"] or today["usd"] >= role["max_usd_per_day"]:
         return [], "daily cycle/USD budget exhausted"
@@ -271,7 +308,18 @@ def finish_cycle(cfg, policy, record, returncode, timed_out=False):
     status = "succeeded" if ok else ("timed_out" if timed_out else (result.get("subtype") or f"exit_{returncode}"))
     cost = float(result.get("total_cost_usd") or 0.0)
     now = utc_now()
+    stderr = (folder / "stderr.log").read_text(encoding="utf-8", errors="replace") if (folder / "stderr.log").exists() else ""
+    error_text = f"{result.get('result') if isinstance(result.get('result'), str) else ''} {stderr} {'' if result else raw[-2000:]}"
+    limit_until = None if ok else usage_limit_until(error_text, now)
+    if limit_until:
+        status = "usage_limit"
     with ledger(cfg) as book:
+        previous_limit = book.get("limit_until_utc")
+        if limit_until:
+            # A subscription limit is not a fault: keep the reasons, skip backoff, retry right after the reset.
+            book["limit_until_utc"] = utc_text(limit_until)
+        elif ok:
+            book.pop("limit_until_utc", None)
         day = book["budget"].setdefault(now.strftime("%Y-%m-%d"), {"cycles": 0, "usd": 0.0})
         day["cycles"] += 1
         day["usd"] = round(day["usd"] + cost, 4)
@@ -286,7 +334,7 @@ def finish_cycle(cfg, policy, record, returncode, timed_out=False):
                     entry = book["watch"][reason["path"]]
                     entry["seen"] = entry.get("stamp")
             book["next_wake"] = report.get("next_wake") or {"mode": "on_event", "reason": "no next_wake given"}
-        else:
+        elif not limit_until:
             book["failures"] += 1
             book["next_wake"] = {"mode": "asap", "reason": f"retry after {status}"}
         entry = {**record, "status": status, "ended_utc": utc_text(now), "returncode": returncode, "cost_usd": cost,
@@ -300,11 +348,14 @@ def finish_cycle(cfg, policy, record, returncode, timed_out=False):
     atomic_json(Path(cfg["project_root"]) / "work" / "agent" / "last_cycle.json", entry)
     if ok and (report.get("human_actions") or report.get("submission_candidate")):
         notify(cfg, report)
-    stderr = (folder / "stderr.log").read_text(encoding="utf-8", errors="replace") if (folder / "stderr.log").exists() else ""
-    if not ok and re.search(r"authenticat|oauth|/login|not been trusted|credit balance|rate.?limit|usage limit", f"{entry['error']} {stderr}", re.I):
-        notify(cfg, {"human_actions": [f"Claude CLI cannot run on {cfg['role']} ({status}). Open a terminal in the project, "
-                                       "run `claude`, accept trust and /login, or wait for the usage limit to reset. Details: "
-                                       + str(folder)]})
+    if limit_until:
+        # One notice per limit episode, not per retry.
+        if not previous_limit or abs((parse_utc(previous_limit) - limit_until).total_seconds()) > 600:
+            local = limit_until.astimezone(datetime.now().astimezone().tzinfo).strftime("%m-%d %H:%M")
+            notify(cfg, {"human_actions": [f"{cfg['role']}: Claude 사용량 한도에 도달했습니다. {local}(이 PC 시각)에 자동으로 재개합니다."]})
+    elif not ok and re.search(r"authenticat|oauth|/login|not been trusted|credit balance", error_text, re.I):
+        notify(cfg, {"human_actions": [f"{cfg['role']}: Claude CLI를 실행할 수 없습니다({status}). 프로젝트 폴더의 터미널에서 "
+                                       "`claude`를 실행해 폴더 신뢰를 수락하고 /login 해 주세요. 기록: " + str(folder)]})
     return entry
 
 
@@ -363,10 +414,15 @@ def loop(cfg, config_path, once=False):
                 stale.update(status="interrupted_by_loop_restart", ended_utc=utc_text(), report=None)
                 book["cycles"].append(stale)
         active = None
+        stamp = _code_stamp()
         try:
             while not (root / "STOP").exists():
                 policy = load_policy(cfg["role"])
                 try:
+                    if active is None and _code_stamp() != stamp:
+                        stamp = _code_stamp()
+                        _reload_code()
+                        _log(log, "reloaded agent_bridge code")
                     if active:
                         process, record, handles = active
                         timeout = policy["role"]["cycle_timeout_minutes"] * 60
@@ -404,6 +460,20 @@ def loop(cfg, config_path, once=False):
             keep_awake(False)
 
 
+def _code_stamp():
+    return sorted((p.name, p.stat().st_mtime_ns) for p in Path(__file__).parent.glob("*.py"))
+
+
+def _reload_code():
+    """Pick up new agent_bridge code between cycles. Restarting the scheduled task would kill
+    running jobs and cycles (they share its job object). The running loop() body stays old, but
+    every function it calls is looked up in the reloaded module namespaces."""
+    import importlib
+    import sys
+    for name in ("agent_bridge.state", "agent_bridge.packets", "agent_bridge.jobs", "agent_bridge.runner"):
+        importlib.reload(sys.modules[name])
+
+
 def _log(path, message):
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"{utc_text()} {message}\n")
@@ -419,6 +489,7 @@ def status(cfg):
         "last_cycles": [{k: c.get(k) for k in ("cycle_id", "status", "ended_utc", "cost_usd")} | {"summary": (c.get("report") or {}).get("summary")}
                         for c in book["cycles"][-5:]],
         "next_wake": book.get("next_wake"), "failures": book["failures"], "budget_today": today,
+        "usage_limit_until_utc": book.get("limit_until_utc"),
         "limits": {k: policy["role"][k] for k in ("max_cycles_per_day", "max_usd_per_day", "max_budget_usd_per_cycle")},
         "packets_waiting": [p for p, e in book["packets"].items() if e.get("status") == "waiting"],
         "packets_unhandled": [p for p, e in book["packets"].items() if e.get("status") == "imported" and not e.get("handled")],

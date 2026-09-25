@@ -69,6 +69,13 @@ powershell -File scripts\setup_claude_agents.ps1 -Role <role> -Uninstall   # 루
 기록 위치: `%LOCALAPPDATA%\AFDA\<role>\agent\`(ledger.json, loop.log, cycles/<id>/stdout.json·prompt.md, jobs/<id>/), 프로젝트 `work/agent/last_cycle.json`·`HUMAN_ACTIONS.md`, 각 에이전트의 `docs/STATUS.md`.
 사이클 대화를 직접 보려면 `claude --resume <session_id>`를 쓴다(session_id는 ledger에 있다).
 
+## 사용량 한도와 코드 갱신
+
+- 2026-09-25 사용자 결정: Claude 추가 사용량(실제 요금)은 끈다. Max 한도에 걸린 사이클은 실패로 세지 않는다. 루프는 오류 문구에서 초기화 시각을 읽어 그때까지 대기하고(모르면 30분), 한도 1회당 알림을 한 번만 보낸다. 깨운 이유는 보존했다가 재개할 때 처리한다.
+- 두 PC가 같은 계정이면 한도를 함께 쓴다. `status`의 `usage_limit_until_utc`로 대기 시각을 확인한다.
+- 루프는 사이클 사이에 `agent_bridge/*.py` 변경을 감지하면 모듈을 다시 읽는다. 코드 갱신 때문에 재시작할 필요가 없다.
+- 재시작이 꼭 필요하면(루프 본문 변경 등) `pause` → 진행 중인 사이클과 job이 끝나기를 기다림 → 작업 스케줄러에서 `AFDA-Agent-<role>` 중지·시작 → `resume` 순서로 한다. job과 사이클은 스케줄러 작업과 같은 job 객체에 있어, 바로 중지하면 함께 종료된다.
+
 ## 사람이 하는 일
 
 1. Ultra에서 위 설정 명령을 1회 실행한다.

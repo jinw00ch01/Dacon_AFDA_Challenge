@@ -131,6 +131,54 @@ class AgentBridgeTests(unittest.TestCase):
             _, blocked = runner.wake_reasons(self.ultra, policy, book)
         self.assertIn("paused", blocked)
 
+    def test_usage_limit_reset_parsing(self):
+        from datetime import datetime, timedelta, timezone
+        kst = timezone(timedelta(hours=9))
+        now = datetime(2026, 9, 25, 5, 0, tzinfo=timezone.utc)  # 14:00 KST
+        until = lambda text: runner.usage_limit_until(text, now, kst)  # noqa: E731
+        minute = timedelta(minutes=1)
+        self.assertIsNone(until("API Error: 529 overloaded"))
+        self.assertEqual(until("You've hit your limit · resets 3pm (Asia/Seoul)"), datetime(2026, 9, 25, 6, 0, tzinfo=timezone.utc) + minute)
+        self.assertEqual(until("5-hour limit reached ∙ resets 1:30am"), datetime(2026, 9, 25, 16, 30, tzinfo=timezone.utc) + minute)
+        future = now + timedelta(hours=3)
+        self.assertEqual(until(f"Claude AI usage limit reached|{int(future.timestamp())}"), future + minute)
+        self.assertEqual(until("usage limit reached, resets in 2h 15m"), now + timedelta(hours=2, minutes=15) + minute)
+        self.assertEqual(until("Your weekly limit resets Sep 29, 9am"), datetime(2026, 9, 29, 0, 0, tzinfo=timezone.utc) + minute)
+        self.assertEqual(until("usage limit reached"), now + timedelta(minutes=30))
+
+    def test_usage_limit_pauses_without_counting_a_failure(self):
+        from unittest.mock import patch
+        policy = load_policy("pro360")
+        packets.publish(self.ultra, "request", {"subject": "x"})
+        packets.import_inbox(self.pro)
+        with ledger(self.pro) as book:
+            reasons, _ = runner.wake_reasons(self.pro, policy, book)
+        (self.base / "stdout.json").write_text(json.dumps({"is_error": True, "result": "You've hit your limit · resets in 45m",
+                                                           "total_cost_usd": 0}), encoding="utf-8")
+        with patch.object(runner, "notify") as notify:
+            entry = runner.finish_cycle(self.pro, policy, {"cycle_id": "c1", "folder": str(self.base), "reasons": reasons,
+                                                           "started_utc": utc_text()}, 1)
+            runner.finish_cycle(self.pro, policy, {"cycle_id": "c2", "folder": str(self.base), "reasons": reasons,
+                                                   "started_utc": utc_text()}, 1)
+        self.assertEqual(entry["status"], "usage_limit")
+        self.assertEqual(notify.call_count, 1)  # one notice per limit episode
+        book = read_ledger(self.pro)
+        self.assertEqual(book["failures"], 0)
+        self.assertFalse(any(e["handled"] for e in book["packets"].values() if e["kind"] == "request"))
+        with ledger(self.pro) as book:
+            _, blocked = runner.wake_reasons(self.pro, policy, book)
+            self.assertIn("usage limit", blocked)
+            book["limit_until_utc"] = "2000-01-01T00:00:00Z"
+            book["cycles"][-1]["ended_utc"] = "2000-01-01T00:00:00Z"  # past the minimum gap
+            reasons, blocked = runner.wake_reasons(self.pro, policy, book)
+        self.assertIsNone(blocked)
+        self.assertTrue(any(r["type"] == "packet" for r in reasons))
+
+    def test_code_reload_keeps_modules_usable(self):
+        runner._reload_code()
+        self.assertIsNone(runner.usage_limit_until("all good"))
+        self.assertTrue(callable(runner.jobs.launch_queued))
+
     def test_cli_accepts_config_before_or_after_subcommand(self):
         from agent_bridge.__main__ import build_parser
         parser = build_parser()
