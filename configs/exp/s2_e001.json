@@ -1,0 +1,13 @@
+{
+  "_note": "S2 safety-net baseline. Trains the BiGRU temporal head on cached ResNet18 features from Nexar agent labels v6 (proxy, self-diagnostic, NOT official GT). Small label set (collision_valid=59, entry_valid=26, evasion_valid=31, side_valid=41), batch=1 per video (T varies). Adjust epochs from val time_mae_s in metrics.json.",
+  "experiment_id": "s2-e001",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v1",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2"
+}
