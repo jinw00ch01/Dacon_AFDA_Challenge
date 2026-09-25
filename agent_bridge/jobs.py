@@ -57,7 +57,8 @@ def launch_queued(cfg, config_path):
             if job["kind"] == "gpu" and _running_gpu(book):
                 continue
             folder = job_dir(cfg, job["job_id"])
-            argv = [cfg["python"], "-m", "agent_bridge", "job-run", "--config", str(config_path), "--job", job["job_id"]]
+            # --config is a top-level option, so it must come before the subcommand
+            argv = [cfg["python"], "-m", "agent_bridge", "--config", str(config_path), "job-run", "--job", job["job_id"]]
             with (folder / "wrapper.log").open("ab") as log:
                 flags = DETACHED if os.name == "nt" else 0
                 try:
