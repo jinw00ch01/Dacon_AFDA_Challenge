@@ -95,6 +95,37 @@ class TrainStage3DataTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(w).all())
         self.assertAlmostEqual(TR.macro_f1([0, 1, 2], [0, 1, 2], 3), 1.0)
 
+    def test_steer_metrics_excludes_stopped(self):
+        stopped = TR.ACCEL.index("STOPPED")
+        moving = TR.ACCEL.index("ACCELERATING")
+        left, straight, right = (TR.STEER.index(x) for x in ("LEFT", "STRAIGHT", "RIGHT"))
+        a_true = [stopped, moving, moving]
+        s_true = [straight, left, right]
+        s_pred = [left, left, right]  # wrong only on the STOPPED row
+        official, incl, n_stopped = TR.steer_metrics(a_true, s_true, s_pred)
+        self.assertEqual(n_stopped, 1)
+        # Dropping the STOPPED row makes the remaining two perfectly classified.
+        self.assertGreater(official, incl)
+        self.assertAlmostEqual(official, TR.macro_f1([left, right], [left, right], len(TR.STEER)))
+
+    def test_evaluate_records_alignment(self):
+        class _Dummy(torch.nn.Module):
+            def forward(self, clips):
+                b = clips.shape[0]
+                return torch.zeros(b, len(TR.ACCEL)), torch.zeros(b, len(TR.STEER))
+
+        val = TR.S3ClipDataset(self.tmp, self.aux, "validation", self.rule, window=16, stride=1)
+        loader = torch.utils.data.DataLoader(val, batch_size=2, shuffle=False)
+        ids = list(val.samples)
+        metrics, records = TR.evaluate(_Dummy(), loader, torch.device("cpu"), amp=False, identities=ids)
+        self.assertEqual(len(records), len(ids))
+        self.assertEqual(list(records["source_id"]), [sid for sid, _ in ids])
+        self.assertEqual(list(records["sample_index"]), [pos for _, pos in ids])
+        self.assertEqual(set(records.columns) >= {"accel_pred", "steer_pred", "split"}, True)
+        self.assertIn("steer_macro_f1_incl_stopped", metrics)
+        with self.assertRaises(ValueError):
+            TR.evaluate(_Dummy(), loader, torch.device("cpu"), amp=False, identities=ids[:-1])
+
 
 if __name__ == "__main__":
     unittest.main()

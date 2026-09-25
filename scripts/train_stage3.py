@@ -38,6 +38,7 @@ from afda.models import Stage3MViT  # noqa: E402
 
 ACCEL = stage3_labels.ACCEL_CLASSES
 STEER = stage3_labels.STEER_CLASSES
+STOPPED_IDX = ACCEL.index("STOPPED")  # evaluation.md excludes STOPPED rows from steer scoring
 MEAN = torch.tensor([0.45, 0.45, 0.45]).view(3, 1, 1, 1)
 STD = torch.tensor([0.225, 0.225, 0.225]).view(3, 1, 1, 1)
 
@@ -143,8 +144,23 @@ def init_backbone(model, enabled):
         return f"scratch (pretrained load failed: {exc})"
 
 
+def steer_metrics(a_true, s_true, s_pred):
+    """Steer macro-F1 both ways. `official` drops rows whose true accel is STOPPED
+    (evaluation.md excludes stopped frames from steering scoring); `incl_stopped`
+    keeps every row (proxy STOPPED rows are steer-masked to STRAIGHT upstream)."""
+    a_true = np.asarray(a_true)
+    s_true = np.asarray(s_true)
+    s_pred = np.asarray(s_pred)
+    incl = macro_f1(s_true, s_pred, len(STEER))
+    keep = a_true != STOPPED_IDX
+    official = macro_f1(s_true[keep], s_pred[keep], len(STEER)) if keep.any() else 0.0
+    return official, incl, int((~keep).sum())
+
+
 @torch.inference_mode()
-def evaluate(model, loader, device, amp):
+def evaluate(model, loader, device, amp, identities=None):
+    """Return summary metrics and, if `identities` (list of (source_id, sample_index))
+    aligned to the loader's fixed order is given, per-sample prediction records."""
     model.eval()
     a_true, a_pred, s_true, s_pred = [], [], [], []
     for clips, accel, steer in loader:
@@ -155,17 +171,40 @@ def evaluate(model, loader, device, amp):
         a_true.extend(accel.tolist())
         s_true.extend(steer.tolist())
     accel_f1 = macro_f1(a_true, a_pred, len(ACCEL))
-    steer_f1 = macro_f1(s_true, s_pred, len(STEER))
+    steer_f1_official, steer_f1_incl, n_stopped = steer_metrics(a_true, s_true, s_pred)
     accel_acc = float(np.mean(np.asarray(a_true) == np.asarray(a_pred))) if a_true else 0.0
     steer_acc = float(np.mean(np.asarray(s_true) == np.asarray(s_pred))) if s_true else 0.0
-    return {
+    metrics = {
         "n": len(a_true),
+        "n_stopped_true": n_stopped,
         "accel_macro_f1": accel_f1,
-        "steer_macro_f1": steer_f1,
+        # official = STOPPED-excluded (evaluation.md); incl_stopped kept for reference
+        "steer_macro_f1": steer_f1_official,
+        "steer_macro_f1_incl_stopped": steer_f1_incl,
         "accel_acc": accel_acc,
         "steer_acc": steer_acc,
-        "mean_macro_f1": (accel_f1 + steer_f1) / 2,
+        # best.pt selection uses the official (STOPPED-excluded) steer F1
+        "mean_macro_f1": (accel_f1 + steer_f1_official) / 2,
     }
+    records = None
+    if identities is not None:
+        if len(identities) != len(a_true):
+            raise ValueError(
+                f"identities ({len(identities)}) != predictions ({len(a_true)}); "
+                "val loader must be shuffle=False, drop_last=False"
+            )
+        records = pd.DataFrame(
+            {
+                "source_id": [sid for sid, _ in identities],
+                "sample_index": [pos for _, pos in identities],
+                "split": "validation",
+                "accel_pred": [ACCEL[i] for i in a_pred],
+                "steer_pred": [STEER[i] for i in s_pred],
+                "accel_true": [ACCEL[i] for i in a_true],
+                "steer_true": [STEER[i] for i in s_true],
+            }
+        )
+    return metrics, records
 
 
 def load_config(path):
@@ -221,6 +260,7 @@ def main() -> int:
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     grad_accum = max(1, int(cfg["grad_accum"]))
 
+    val_ids = list(val_set.samples)  # (source_id, sample_index) aligned to val_loader order
     best = {"mean_macro_f1": -1.0}
     history = []
     for epoch in range(int(cfg["epochs"])):
@@ -245,7 +285,10 @@ def main() -> int:
             running += float(loss) * grad_accum
             if step % 100 == 0:
                 print(f"  epoch {epoch} step {step} loss {float(loss) * grad_accum:.4f}", flush=True)
-        metrics = evaluate(model, val_loader, device, amp) if len(val_set) else {}
+        if len(val_set):
+            metrics, records = evaluate(model, val_loader, device, amp, identities=val_ids)
+        else:
+            metrics, records = {}, None
         metrics["epoch"] = epoch
         metrics["train_loss"] = running / max(1, step + 1)
         metrics["seconds"] = round(time.time() - start, 1)
@@ -253,6 +296,9 @@ def main() -> int:
         print(f"epoch {epoch} done: {json.dumps(metrics)}", flush=True)
         if metrics.get("mean_macro_f1", -1) > best["mean_macro_f1"]:
             best = metrics
+            if records is not None:
+                records.to_csv(out_dir / "val_predictions.csv", index=False)
+                print(f"  wrote val_predictions.csv ({len(records)} rows)", flush=True)
             torch.save(
                 {
                     "model": model.state_dict(),
