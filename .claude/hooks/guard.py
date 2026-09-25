@@ -65,7 +65,9 @@ def norm(text):
 
 
 def project_dir():
-    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2]).resolve()
+    # The guard protects the checkout it lives in. CLAUDE_PROJECT_DIR can be stale when a
+    # desktop session moves between folders, so it is only used to locate this script.
+    return Path(__file__).resolve().parents[2]
 
 
 def local_config(project):

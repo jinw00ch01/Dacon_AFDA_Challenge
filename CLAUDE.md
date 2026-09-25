@@ -28,6 +28,7 @@
 - 셸 명령은 10분 안에 끝나야 한다. 더 긴 학습·평가·대량 처리는 `python -m agent_bridge job start --kind cpu|gpu --timeout <초> --name <이름> -- <명령>`으로 큐에 넣는다. 완료되면 루프가 다음 사이클을 깨운다.
 - 상대 PC와의 통신은 패킷으로만 한다: `python -m agent_bridge publish --kind <kind> --body <json> [--attach <폴더>]`. `C:\Dacon\AFDA_Exchange`에 직접 쓰지 않는다.
 - 상태의 근거는 대화가 아니라 파일이다: `docs/STATUS.md`(로컬, Git 제외), `python -m agent_bridge status`, 패킷, `runs/`.
+- 사용자가 읽는 글(`docs/STATUS.md`, 사이클 보고의 summary·human_actions, 패킷의 subject·body)은 한국어로 쓴다. 코드·명령·식별자는 그대로 둔다.
 - 보호 경로(읽기만 가능): `data/external/`, `data/captures/`, `Baseline/`, 사람 CSV 2개, `data/derived/labels/human/`, `data/derived/peer_reviews/`, 수신 패킷.
 - 점수는 검증 split에서 측정한 것만 보고한다. 없는 값은 null로 둔다. 가중치 로딩이 실패하면 랜덤 가중치로 대체하지 않는다.
 - 제출 코드는 오프라인에서 동작해야 한다: `weights=None`로 모델을 만든 뒤 `load_state_dict`로 가중치를 불러오고, 추론 중 다운로드하지 않는다. 전체 60분, 설치 10분 제한을 지킨다(evaluation.md).

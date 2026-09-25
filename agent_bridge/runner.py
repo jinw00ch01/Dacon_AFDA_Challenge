@@ -191,7 +191,10 @@ def _claude_call(cfg, policy, session_id, cycle_id, budget_usd):
         argv += ["--model", role["model"]]
     if role.get("effort"):
         argv += ["--effort", role["effort"]]
-    environment = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k != "CLAUDE_CODE_ENTRYPOINT"}
+    # Drop variables of any Claude session that launched us (e.g. setup run from a Claude terminal),
+    # so the child resolves its own project dir and hooks from cwd.
+    inherited = {"CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_SSE_PORT", "CLAUDE_ENV_FILE"}
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k not in inherited}
     environment.update(AFDA_AUTONOMOUS="1", AFDA_ROLE=cfg["role"], AFDA_CYCLE_ID=cycle_id,
                        AFDA_EXCHANGE_CONFIG=str(Path(cfg["project_root"]) / "configs/local-exchange.json"))
     return argv, environment

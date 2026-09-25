@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.py\"",
+            "command": "for d in \"$CLAUDE_PROJECT_DIR\" \"$(git rev-parse --show-toplevel 2>/dev/null)\" C:/Dacon/Dacon_AFDA_Challenge_git C:/Dacon/Dacon_AFDA_Challenge; do [ -f \"$d/.claude/hooks/guard.py\" ] && exec python \"$d/.claude/hooks/guard.py\"; done; echo 'AFDA guard.py not found' >&2; exit 2",
             "timeout": 30
           }
         ]
