@@ -11,6 +11,11 @@ import sys
 import unittest
 from pathlib import Path
 
+# GitHub CI (.github/workflows/contracts.yml) installs only psutil; the ML stack is tested on Ultra's venv.
+ML_MISSING = [m for m in ("numpy", "pandas", "torch", "torchvision", "cv2") if importlib.util.find_spec(m) is None]
+if ML_MISSING:
+    raise unittest.SkipTest("ML stack not installed: " + ", ".join(ML_MISSING))
+
 import numpy as np
 import torch
 

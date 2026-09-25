@@ -32,3 +32,4 @@
 - 보호 경로(읽기만 가능): `data/external/`, `data/captures/`, `Baseline/`, 사람 CSV 2개, `data/derived/labels/human/`, `data/derived/peer_reviews/`, 수신 패킷.
 - 점수는 검증 split에서 측정한 것만 보고한다. 없는 값은 null로 둔다. 가중치 로딩이 실패하면 랜덤 가중치로 대체하지 않는다.
 - 제출 코드는 오프라인에서 동작해야 한다: `weights=None`로 모델을 만든 뒤 `load_state_dict`로 가중치를 불러오고, 추론 중 다운로드하지 않는다. 전체 60분, 설치 10분 제한을 지킨다(evaluation.md).
+- GitHub CI(`.github/workflows/contracts.yml`)는 Python 3.12에 `psutil`만 설치하고 `unittest discover -s tests`를 돌린다. numpy·pandas·torch·torchvision·cv2가 필요한 테스트는 파일 첫머리에서 없으면 `unittest.SkipTest`를 올린다(예: `tests/test_afda.py`의 `ML_MISSING`). 로컬 venv 통과를 CI 통과로 보지 않는다.
