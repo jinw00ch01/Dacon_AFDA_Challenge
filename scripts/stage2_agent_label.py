@@ -5,6 +5,13 @@
   merge  write a merged candidate: human `reviewed` rows always override agent rows
 
 Agent rows are `agent_labeled`, never `reviewed`. The human CSV is only read.
+
+Expansion videos (decision 8, Nexar positives beyond the human CSV) come in through `--meta <csv>`
+(repeatable; columns video_id, source_path, source_label, decoded_frames, fps and optional
+nexar_event_frame = time_of_event x fps). In `merge`, an expansion video without an agent row becomes
+label_source=nexar_event with actual_contact=contact_unverified (collision_valid stays 0); an agent row
+with actual_contact=yes but no collision_frame takes nexar_event_frame. `collision_frame_source` records
+which of human / agent / nexar_event supplied the frame.
 """
 import argparse
 import csv
@@ -35,8 +42,20 @@ def latest():
     return result
 
 
-def add(args):
+def load_meta(extra=()):
+    """Human CSV rows first, then expansion metadata rows keyed by video_id."""
     meta = {r["video_id"]: r for r in rows(HUMAN)}
+    for path in extra or ():
+        for row in rows(Path(path)):
+            vid = row["video_id"]
+            if vid in meta and int(float(meta[vid]["decoded_frames"])) != int(float(row["decoded_frames"])):
+                raise SystemExit(f"{vid}: decoded_frames differs between metadata files")
+            meta.setdefault(vid, row)
+    return meta
+
+
+def add(args):
+    meta = load_meta(args.meta)
     if args.video_id not in meta:
         raise SystemExit(f"Unknown video_id {args.video_id!r} (keep leading zeros)")
     frames = int(float(meta[args.video_id]["decoded_frames"]))
@@ -72,20 +91,30 @@ def add(args):
 def merge(args):
     agent = latest()
     merged = []
-    for meta in rows(HUMAN):
+    for meta in load_meta(args.meta).values():
         vid = meta["video_id"]
         human = meta.get("review_status") == "reviewed"
         source = meta if human else agent.get(vid)
+        event = (meta.get("nexar_event_frame") or "").strip()
+        event = str(int(float(event))) if event else ""
+        label_source = "human" if human else ("agent" if source else ("nexar_event" if event else "none"))
         out = {"video_id": vid, "source_path": meta["source_path"], "source_label": meta["source_label"],
                "decoded_frames": meta["decoded_frames"], "fps": meta["fps"],
-               "label_source": "human" if human else ("agent" if source else "none"),
+               "label_source": label_source,
                "confidence": "1.0" if human else (source or {}).get("confidence", "")}
         for name in LABEL_FIELDS:
             out[name] = (source or {}).get(name, "")
+        frame_source = label_source if out["collision_frame"] != "" else ""
+        if label_source == "nexar_event":
+            out["actual_contact"], out["collision_frame"], frame_source = "contact_unverified", event, "nexar_event"
+        elif out["actual_contact"] == "yes" and out["collision_frame"] == "" and event:
+            out["collision_frame"], frame_source = event, "nexar_event"
         out["collision_valid"] = int(out["actual_contact"] == "yes" and out["collision_frame"] != "")
         out["entry_valid"] = int(out["lane_entry_suitable"] == "yes" and out["entry_frame"] != "")
         out["evasion_valid"] = int(out["evasion_space"] in {"0", "1"})
         out["side_valid"] = int(out["entry_side"] in {"LEFT", "RIGHT"})
+        out["collision_frame_source"] = frame_source
+        out["nexar_event_frame"] = event
         merged.append(out)
     target = args.out or ROOT / "data/derived/labels" / f"stage2_merged_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.csv"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -94,8 +123,8 @@ def merge(args):
         writer.writeheader()
         writer.writerows(merged)
     counts = {k: sum(r[k] for r in merged) for k in ("collision_valid", "entry_valid", "evasion_valid", "side_valid")}
-    print(json.dumps({"file": str(target), "videos": len(merged), "human": sum(r["label_source"] == "human" for r in merged),
-                      "agent": sum(r["label_source"] == "agent" for r in merged), "valid_counts": counts}))
+    sources = {k: sum(r["label_source"] == k for r in merged) for k in ("human", "agent", "nexar_event", "none")}
+    print(json.dumps({"file": str(target), "videos": len(merged), **sources, "valid_counts": counts}))
 
 
 def main():
@@ -114,9 +143,11 @@ def main():
     a.add_argument("--notes", default="")
     a.add_argument("--model")
     a.add_argument("--guideline", default="DATA_PREPARATION_SPEC.md#5@2026-09-25")
+    a.add_argument("--meta", action="append", default=[], help="expansion metadata CSV (repeatable)")
     sub.add_parser("latest")
     m = sub.add_parser("merge")
     m.add_argument("--out", type=Path)
+    m.add_argument("--meta", action="append", default=[], help="expansion metadata CSV (repeatable)")
     args = parser.parse_args()
     if args.command == "add":
         add(args)
