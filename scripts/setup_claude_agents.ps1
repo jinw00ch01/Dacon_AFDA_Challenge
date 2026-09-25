@@ -80,7 +80,7 @@ if (-not $SkipRawDataProtection) {
 
 # 4. Role memory for Claude Code (git-ignored) and guard/claude self-test.
 @"
-# 이 PC의 AFDA 역할: $Role
+# AFDA role of this PC: $Role
 @.claude/roles/$Role.md
 "@ | Set-Content -LiteralPath (Join-Path $projectRoot 'CLAUDE.local.md') -Encoding UTF8
 New-Item -ItemType Directory -Path (Join-Path $projectRoot 'work\agent\outbox') -Force | Out-Null
