@@ -24,6 +24,7 @@ def main(argv=None):
     sub.add_parser("tick", help="One loop iteration without starting Claude (debug)")
     sub.add_parser("status", help="Loop, cycle, packet, job and budget status")
     sub.add_parser("selftest", help="Check config, policy, guard hook and claude executable")
+    sub.add_parser("probe", help="Run the real headless claude command once with a trivial task (costs cents)")
     sub.add_parser("inbox", help="List imported packets and their local paths")
     publish = sub.add_parser("publish", help="Publish a packet from a JSON body (+ optional attachment folder)")
     publish.add_argument("--kind", required=True, choices=sorted(packets.KINDS - {"ack"}))
@@ -64,6 +65,10 @@ def main(argv=None):
             checks["claude"] = str(error)
         _print(checks)
         return 0 if checks["guard_denies_force_push"] and isinstance(checks["claude"], list) else 1
+    elif args.command == "probe":
+        result = runner.probe(cfg, load_policy(cfg["role"]))
+        _print(result)
+        return 0 if result["ok"] else 1
     elif args.command == "inbox":
         book = read_ledger(cfg)
         _print([{"packet_id": p, **{k: e.get(k) for k in ("kind", "status", "handled", "subject", "experiment_id", "imported_utc", "local_path", "detail")}}

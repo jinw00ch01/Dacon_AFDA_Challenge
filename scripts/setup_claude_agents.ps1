@@ -94,11 +94,14 @@ $trusted = & $python -c "import json,sys;d=json.load(open(sys.argv[1],encoding='
 $howTo = "In a terminal: cd `"$projectRoot`"; claude   -> accept 'trust this folder', type /login if asked, then /exit. Re-run this script."
 if ($trusted.Trim() -ne 'True') { Write-Output "ACTION NEEDED: Claude Code has not trusted this folder yet. $howTo"; exit 2 }
 if (-not $SkipClaudeCheck) {
-    $claude = (& $python -c "from agent_bridge.runner import resolve_claude;from agent_bridge.state import load_policy;print(resolve_claude(load_policy('$Role'))[0])").Trim()
-    Remove-Item Env:CLAUDECODE -ErrorAction SilentlyContinue
-    $answer = ('Reply with exactly: AFDA-OK' | & $claude -p --output-format json --max-budget-usd 0.5) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $answer -notmatch 'AFDA-OK') { Write-Output "ACTION NEEDED: claude -p cannot run ($answer). $howTo"; exit 3 }
-    Write-Output 'claude -p authentication: OK'
+    # Same command line as a real cycle (login, trust, flags of this CLI version, guard hook, JSON report).
+    $answer = (& $python -m agent_bridge --config $config probe) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "ACTION NEEDED: the headless claude run failed: $answer"
+        Write-Output "Fix: $howTo  If it reports an unknown option, update the CLI with: claude update"
+        exit 3
+    }
+    Write-Output "claude -p probe: OK $answer"
 }
 
 # 6. Agent loop as a scheduled task: starts at logon, restarts if it dies. Runs as this user.

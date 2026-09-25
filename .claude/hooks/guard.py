@@ -146,7 +146,7 @@ def check_shell(command, role, autonomous, project, exchange_root, cwd):
     if SECRETS.search(text):
         return "deny", "Credential and Syncthing key files are off limits."
     if autonomous and (re.search(r"(setup_claude_agents|setup_exchange|start_exchange|stop_exchange|bootstrap)\.ps1", text)
-                       or re.search(r"agent_bridge\b[^;&|\n]*\s(loop|pause|resume|stop|job-run)\b", text)
+                       or re.search(r"agent_bridge\b[^;&|\n]*\s(loop|pause|resume|stop|job-run|probe)\b", text)
                        or re.search(r"exchange_bridge\b[^;&|\n]*\s(worker|stop-transport|pair|configure)\b", text)):
         return "deny", "Service setup and loop control belong to the human operator; record the need in human_actions."
     if role == "pro360" and (re.search(r"harness\b.*\bexecute\b.*--kind\s+gpu", text) or re.search(r"agent_bridge\b.*\bjob\s+start\b.*--kind\s+gpu", text)):

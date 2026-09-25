@@ -80,7 +80,8 @@ class GuardTests(unittest.TestCase):
 
     def test_service_control_is_for_humans(self):
         for command in ("powershell -File scripts/setup_claude_agents.ps1 -Role pro360", "python -m agent_bridge pause",
-                        "python -m agent_bridge stop", "python -m exchange_bridge.transport pair --config c --peer-id X"):
+                        "python -m agent_bridge stop", "python -m agent_bridge probe",
+                        "python -m exchange_bridge.transport pair --config c --peer-id X"):
             with self.subTest(command=command):
                 self.assertEqual(shell(command), "deny")
         self.assertEqual(shell("python -m agent_bridge status"), "allow")
