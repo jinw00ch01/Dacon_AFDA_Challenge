@@ -71,6 +71,17 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(shell("git push origin main", role="ultra5060"), "allow")
         self.assertEqual(shell("git push origin main", role="pro360", autonomous=False), None)
 
+    def test_quoted_text_and_heredoc_bodies_are_not_commands(self):
+        for command in ('python -c "import json; d=json.load(open(\'x\')); print(d[\'run_dir\'])"',
+                        "cat > work/x.py <<'EOF'\nimport os\nprint(1)\nEOF\npython work/x.py",
+                        'echo "a; b | c && d"', "git log --format='%h; %s' -3 2>&1 | head -3"):
+            with self.subTest(command=command):
+                self.assertEqual(shell(command, role="pro360"), "allow")
+        for command in ("ls; netcat -l 1", "cat > work/x.py <<'EOF'\nprint(1)\nEOF\nnetcat -l 1",
+                        "echo x > data/external/a.csv", 'python -c "import shutil; shutil.rmtree(\'data/external\')"'):
+            with self.subTest(command=command):
+                self.assertEqual(shell(command, role="pro360"), "deny")
+
     def test_unknown_programs_and_nested_claude_denied_when_unattended(self):
         self.assertEqual(shell("netcat -l 9000"), "deny")
         self.assertEqual(shell("claude -p hello"), "deny")

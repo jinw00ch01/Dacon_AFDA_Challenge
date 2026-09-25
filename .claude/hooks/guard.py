@@ -77,10 +77,52 @@ def local_config(project):
         return {}
 
 
+def _strip_heredocs(command):
+    """Heredoc bodies are data being written to a file, not commands."""
+    kept, pending = [], []
+    for line in command.split("\n"):
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        pending += [m.group(2) for m in re.finditer(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1", line)]
+    return "\n".join(kept)
+
+
 def segments(command):
-    """Split a shell line into simple commands; include $(...) bodies."""
-    parts = re.split(r"\|\||&&|[;|\n]|(?<![>&0-9])&(?![>&])", command)
-    parts += re.findall(r"\$\(([^()]*)\)", command)
+    """Split a shell line into simple commands at ; && || | & and newlines outside quotes; add $(...) bodies."""
+    text = _strip_heredocs(command)
+    parts, buf, quote, i = [], [], None, 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            buf.append(c)
+            if c == "\\" and quote == '"' and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+            buf.append(c)
+        elif c in ";\n":
+            parts.append("".join(buf))
+            buf = []
+        elif c in "&|":
+            prev, nxt = (text[i - 1] if i else ""), (text[i + 1] if i + 1 < len(text) else "")
+            if c == "&" and (prev == ">" or prev.isdigit() or nxt == ">"):
+                buf.append(c)  # 2>&1, >&2, &>file are redirections
+            else:
+                parts.append("".join(buf))
+                buf = []
+                if nxt == c:
+                    i += 1
+        else:
+            buf.append(c)
+        i += 1
+    parts.append("".join(buf))
+    parts += re.findall(r"\$\(([^()]*)\)", text)
     return [p.strip() for p in parts if p.strip()]
 
 
