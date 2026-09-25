@@ -1,0 +1,18 @@
+{
+  "manifest_csv": "data/derived/releases/s1-synth-v1-20260925/manifest.csv",
+  "video_root": "data/derived/s1_synthetic_v1",
+  "epochs": 4,
+  "batch_size": 2,
+  "grad_accum": 4,
+  "lr": 2e-4,
+  "weight_decay": 0.05,
+  "seed": 0,
+  "num_workers": 4,
+  "size": 224,
+  "frames": 16,
+  "slots": 3,
+  "init_pretrained": true,
+  "amp": true,
+  "out_dir": "models/stage1",
+  "max_train_batches": null
+}
