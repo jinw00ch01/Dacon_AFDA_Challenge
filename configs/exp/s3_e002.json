@@ -1,0 +1,22 @@
+{
+  "_note": "S3 e002 (decision 10 + decision 2a905805): predict speed_mps with an MSE regression head, then derive the accel class via afda.stage3_labels (v1b rule). Single change vs e001 = predict_speed. best.pt selection uses official_s3 = 0.7*accel + 0.3*steer. out_dir isolated so v001 models/stage3 (e001 accel head) is preserved; promote only if official_s3 beats e001 on the same s3-aux-rules-v1b release/split. Proxy targets are self-diagnostic, not official GT.",
+  "experiment_id": "s3-e002",
+  "stage": "stage3",
+  "cache_dir": "data/derived/s3_clip_cache_v1",
+  "aux_csv": "data/derived/releases/s3-aux-rules-v1b-20260925/s3_auxiliary_10hz.csv",
+  "rule": {"window": 5, "v_stop": 0.5, "a_db": 0.2, "s_th": 4.5, "bias": -0.3},
+  "predict_speed": true,
+  "epochs": 3,
+  "batch_size": 2,
+  "grad_accum": 4,
+  "lr": 3e-4,
+  "weight_decay": 0.05,
+  "seed": 0,
+  "num_workers": 4,
+  "window": 16,
+  "train_stride": 2,
+  "val_stride": 1,
+  "init_pretrained": true,
+  "amp": true,
+  "out_dir": "models/stage3_e002"
+}

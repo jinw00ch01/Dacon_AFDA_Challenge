@@ -232,19 +232,54 @@ def predict_stage2(data_dir, model_dir):
     )
 
 
-# --- Stage 3: MViTv2-S accel/steer multi-head ---------------------------------
+# --- Stage 3: MViTv2-S multi-head (accel-class e001 OR speed-regression e002) --
+S3_RULE = {"window": 5, "v_stop": 0.5, "a_db": 0.2, "s_th": 4.5, "bias": -0.3}
+
+
 class _Stage3MViT(nn.Module):
-    def __init__(self):
+    def __init__(self, predict_speed=False):
         super().__init__()
+        self.predict_speed = bool(predict_speed)
         self.backbone = mvit_v2_s(weights=None)
         dimension = self.backbone.head[1].in_features
         self.backbone.head = nn.Identity()
-        self.accel = nn.Linear(dimension, 4)
+        if self.predict_speed:
+            self.speed = nn.Linear(dimension, 1)
+        else:
+            self.accel = nn.Linear(dimension, 4)
         self.steer = nn.Linear(dimension, 3)
 
     def forward(self, x):
         features = self.backbone(x)
-        return self.accel(features), self.steer(features)
+        head = self.speed if self.predict_speed else self.accel
+        return head(features), self.steer(features)
+
+
+def _accel_from_speed(speeds, rule):
+    """Derive accel-class labels from ONE video's predicted-speed sequence, matching
+    afda.stage3_labels.accel_from_speed_series with uniform 10Hz (0.1s) spacing --
+    the inference case (decimated video has no sensor timestamps)."""
+    window = int(rule["window"])
+    v_stop, a_db = rule["v_stop"], rule["a_db"]
+    speed = np.asarray(speeds, dtype=np.float64)
+    n = speed.shape[0]
+    if n == 0:
+        return []
+    t = np.arange(n, dtype=np.float64) * 0.1
+    accel = np.gradient(speed, t) if n >= 2 else np.zeros(n, dtype=np.float64)
+    s_ma = pd.Series(speed).rolling(window, center=True, min_periods=1).mean().to_numpy()
+    a_ma = pd.Series(accel).rolling(window, center=True, min_periods=1).mean().to_numpy()
+    labels = []
+    for s, a in zip(s_ma, a_ma):
+        if s < v_stop:
+            labels.append("STOPPED")
+        elif a > a_db:
+            labels.append("ACCELERATING")
+        elif a < -a_db:
+            labels.append("DECELERATING")
+        else:
+            labels.append("CONSTANT")
+    return labels
 
 
 def _stage3_frames(path: Path):
@@ -272,8 +307,13 @@ def _stage3_frames(path: Path):
 def predict_stage3(data_dir, model_dir):
     device = _device()
     checkpoint = torch.load(Path(model_dir) / "best.pt", map_location="cpu", weights_only=False)
-    model = _Stage3MViT()
-    model.load_state_dict(checkpoint["model"])
+    state = checkpoint["model"]
+    # e002 speed-regression checkpoints carry head_kind="speed" (or a speed.* weight);
+    # e001 accel-class checkpoints keep the original path byte-for-byte.
+    predict_speed = checkpoint.get("head_kind") == "speed" or "speed.weight" in state
+    rule = checkpoint.get("rule", S3_RULE)
+    model = _Stage3MViT(predict_speed=predict_speed)
+    model.load_state_dict(state)
     model.to(device).eval()
     videos = _video_paths(Path(data_dir) / "videos")
     rows = []
@@ -282,22 +322,29 @@ def predict_stage3(data_dir, model_dir):
             frames = _stage3_frames(path)
             count = len(frames)
             centers = np.arange(count)
-            accel_predictions, steer_predictions = [], []
+            head_predictions, steer_predictions = [], []
             for start in range(0, count, 8):
                 center = centers[start : start + 8]
                 indices = np.clip(center[:, None] - 8 + np.arange(16)[None, :], 0, count - 1)
                 clips = frames[torch.from_numpy(indices)].permute(0, 2, 1, 3, 4).float() / 255.0
                 clips = (clips - S3_MEAN[None, :, None, :, :]) / S3_STD[None, :, None, :, :]
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    accel_logits, steer_logits = model(clips.to(device, non_blocking=True))
-                accel_predictions.extend(accel_logits.argmax(1).cpu().tolist())
+                    head_logits, steer_logits = model(clips.to(device, non_blocking=True))
+                if predict_speed:
+                    head_predictions.extend(head_logits.squeeze(-1).float().cpu().tolist())
+                else:
+                    head_predictions.extend(head_logits.argmax(1).cpu().tolist())
                 steer_predictions.extend(steer_logits.argmax(1).cpu().tolist())
-            for sample_index, (accel, steer) in enumerate(zip(accel_predictions, steer_predictions)):
+            if predict_speed:
+                accel_labels = _accel_from_speed(head_predictions, rule)
+            else:
+                accel_labels = [ACCEL[i] for i in head_predictions]
+            for sample_index, (accel_label, steer) in enumerate(zip(accel_labels, steer_predictions)):
                 rows.append(
                     {
                         "ID": path.stem,
                         "sample_index": sample_index,
-                        "accel_label": ACCEL[accel],
+                        "accel_label": accel_label,
                         "steer_label": STEER[steer],
                     }
                 )

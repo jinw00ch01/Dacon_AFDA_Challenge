@@ -41,21 +41,33 @@ class Stage2Temporal(nn.Module):
 
 
 class Stage3MViT(nn.Module):
-    """MViTv2-S backbone with accel(4) + steer(3) heads."""
+    """MViTv2-S backbone with a steer(3) head plus one of two accel heads.
 
-    def __init__(self):
+    ``predict_speed=False`` (e001 default): a 4-class accel classification head.
+    ``predict_speed=True`` (e002): a scalar speed-regression head; the accel class
+    is derived from predicted speed downstream (afda.stage3_labels). The two heads
+    are named differently (``accel`` vs ``speed``) so a checkpoint loads only into
+    the matching variant and never silently into the wrong one.
+    """
+
+    def __init__(self, predict_speed: bool = False):
         super().__init__()
         from torchvision.models.video import mvit_v2_s
 
+        self.predict_speed = bool(predict_speed)
         self.backbone = mvit_v2_s(weights=None)
         dimension = self.backbone.head[1].in_features
         self.backbone.head = nn.Identity()
-        self.accel = nn.Linear(dimension, 4)
+        if self.predict_speed:
+            self.speed = nn.Linear(dimension, 1)
+        else:
+            self.accel = nn.Linear(dimension, 4)
         self.steer = nn.Linear(dimension, 3)
 
     def forward(self, x):
         features = self.backbone(x)
-        return self.accel(features), self.steer(features)
+        head = self.speed if self.predict_speed else self.accel
+        return head(features), self.steer(features)
 
 
 def build_stage2_backbone() -> nn.Module:

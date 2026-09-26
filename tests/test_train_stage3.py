@@ -74,7 +74,7 @@ class TrainStage3DataTest(unittest.TestCase):
     def test_window_matches_inference(self):
         ds = TR.S3ClipDataset(self.tmp, self.aux, "train", self.rule, window=16, stride=1)
         for pos in range(self.T):
-            clip, _, _ = ds[pos]
+            clip, _, _, _ = ds[pos]
             self.assertEqual(tuple(clip.shape), (3, 16, 4, 4))
             idx = np.clip(pos - 8 + np.arange(16), 0, self.T - 1)  # same formula as inference
             expected = torch.from_numpy(self.train_arr[idx].astype(np.float32)).permute(1, 0, 2, 3) / 255.0
@@ -128,8 +128,53 @@ class TrainStage3DataTest(unittest.TestCase):
         self.assertEqual(list(records["sample_index"]), [pos for _, pos in ids])
         self.assertEqual(set(records.columns) >= {"accel_pred", "steer_pred", "split"}, True)
         self.assertIn("steer_macro_f1_incl_stopped", metrics)
+        # decision 10: best.pt selection metric is official S3 = 0.7*accel + 0.3*steer.
+        self.assertAlmostEqual(
+            metrics["official_s3"],
+            0.7 * metrics["accel_macro_f1"] + 0.3 * metrics["steer_macro_f1"],
+        )
         with self.assertRaises(ValueError):
             TR.evaluate(_Dummy(), loader, torch.device("cpu"), amp=False, identities=ids[:-1])
+
+    def test_dataset_exposes_speed_target(self):
+        # e002 regression head needs the raw speed_mps per sample, aligned to accel/steer.
+        val = TR.S3ClipDataset(self.tmp, self.aux, "validation", self.rule, window=16, stride=1)
+        self.assertEqual(len(val.speed), len(val.accel))
+        self.assertTrue(all(abs(s - 20.0) < 1e-9 for s in val.speed))  # SRC_B speed=20
+        _clip, accel_idx, steer_idx, speed = val[0]
+        self.assertEqual(accel_idx, TR.ACCEL.index("ACCELERATING"))
+        self.assertAlmostEqual(float(speed), 20.0)
+
+    def test_evaluate_speed_mode_derives_accel(self):
+        # A monotonically rising predicted speed must derive to ACCELERATING and the
+        # speed path must emit official_s3 plus a speed_pred column in the records.
+        class _SpeedModel(torch.nn.Module):
+            def __init__(self, base):
+                super().__init__()
+                self.base = float(base)
+                self._t = 0.0
+
+            def forward(self, clips):
+                b = clips.shape[0]
+                # rising ramp across the (shuffle=False) val sequence
+                speeds = self.base + self._t + torch.arange(b, dtype=torch.float32)
+                self._t += b
+                return speeds[:, None], torch.zeros(b, len(TR.STEER))
+
+        val = TR.S3ClipDataset(self.tmp, self.aux, "validation", self.rule, window=16, stride=1)
+        loader = torch.utils.data.DataLoader(val, batch_size=2, shuffle=False)
+        ids = list(val.samples)
+        metrics, records = TR.evaluate(
+            _SpeedModel(5.0), loader, torch.device("cpu"), amp=False,
+            identities=ids, predict_speed=True, rule=self.rule,
+        )
+        self.assertIn("official_s3", metrics)
+        self.assertIn("speed_pred", records.columns)
+        self.assertEqual(set(records["accel_pred"]), {"ACCELERATING"})
+        # speed mode without identities cannot order per-source speeds -> guard raises
+        with self.assertRaises(ValueError):
+            TR.evaluate(_SpeedModel(5.0), loader, torch.device("cpu"), amp=False,
+                        identities=None, predict_speed=True, rule=self.rule)
 
 
 if __name__ == "__main__":

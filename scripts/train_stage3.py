@@ -60,6 +60,9 @@ DEFAULTS = {
     "amp": True,
     "out_dir": "models/stage3",
     "max_train_batches": None,
+    # e002: regress speed_mps then derive the accel class (afda.stage3_labels);
+    # False keeps the e001 4-class accel classification head unchanged.
+    "predict_speed": False,
 }
 
 
@@ -70,7 +73,10 @@ class S3ClipDataset(Dataset):
         self.window = int(window)
         self.paths = {}
         self._arrays = {}  # lazy mmap per worker
-        self.samples, self.accel, self.steer = [], [], []
+        # `accel`/`steer` are the proxy class indices; `speed` is the raw speed_mps
+        # target for the e002 regression head. All three are always populated so
+        # eval can score accel-from-speed against the same proxy accel truth.
+        self.samples, self.accel, self.steer, self.speed = [], [], [], []
         labeled = stage3_labels.add_labels(aux, rule)
         labeled = labeled[labeled["split"] == split]
         for sid, group in labeled.groupby("source_id", sort=True):
@@ -87,10 +93,12 @@ class S3ClipDataset(Dataset):
             self.paths[sid] = npy
             accel = [ACCEL.index(x) for x in group["accel_label"]]
             steer = [STEER.index(x) for x in group["steer_label"]]
+            speed = [float(x) for x in group["speed_mps"]]
             for pos in range(0, n_cache, int(stride)):
                 self.samples.append((sid, pos))
                 self.accel.append(accel[pos])
                 self.steer.append(steer[pos])
+                self.speed.append(speed[pos])
 
     def _array(self, sid):
         arr = self._arrays.get(sid)
@@ -109,7 +117,7 @@ class S3ClipDataset(Dataset):
         idx = np.clip(pos - self.window // 2 + np.arange(self.window), 0, total - 1)
         clip = torch.from_numpy(np.ascontiguousarray(arr[idx])).permute(1, 0, 2, 3).float() / 255.0
         clip = (clip - MEAN) / STD
-        return clip, self.accel[index], self.steer[index]
+        return clip, self.accel[index], self.steer[index], self.speed[index]
 
 
 def class_weights(labels, n_classes):
@@ -158,18 +166,46 @@ def steer_metrics(a_true, s_true, s_pred):
 
 
 @torch.inference_mode()
-def evaluate(model, loader, device, amp, identities=None):
+def evaluate(model, loader, device, amp, identities=None, predict_speed=False, rule=None):
     """Return summary metrics and, if `identities` (list of (source_id, sample_index))
-    aligned to the loader's fixed order is given, per-sample prediction records."""
+    aligned to the loader's fixed order is given, per-sample prediction records.
+
+    When `predict_speed` is True the first model output is a scalar speed; the accel
+    class is derived per source from the predicted-speed sequence with the SAME rule
+    the submission uses (afda.stage3_labels.derive_accel_column), so accel is scored
+    exactly as it ships. `identities` is then required (the derivation needs
+    source_id/sample_index to order each recording's speeds)."""
     model.eval()
-    a_true, a_pred, s_true, s_pred = [], [], [], []
-    for clips, accel, steer in loader:
+    a_true, a_pred, s_true, s_pred, speed_pred = [], [], [], [], []
+    for clips, accel, steer, _speed in loader:
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-            accel_logits, steer_logits = model(clips.to(device, non_blocking=True))
-        a_pred.extend(accel_logits.argmax(1).cpu().tolist())
+            head_out, steer_logits = model(clips.to(device, non_blocking=True))
         s_pred.extend(steer_logits.argmax(1).cpu().tolist())
         a_true.extend(accel.tolist())
         s_true.extend(steer.tolist())
+        if predict_speed:
+            speed_pred.extend(head_out.squeeze(-1).float().cpu().tolist())
+        else:
+            a_pred.extend(head_out.argmax(1).cpu().tolist())
+
+    if predict_speed:
+        if identities is None:
+            raise ValueError("predict_speed eval needs identities to order per-source speeds")
+        if len(identities) != len(a_true):
+            raise ValueError(
+                f"identities ({len(identities)}) != predictions ({len(a_true)}); "
+                "val loader must be shuffle=False, drop_last=False"
+            )
+        speed_df = pd.DataFrame(
+            {
+                "source_id": [sid for sid, _ in identities],
+                "sample_index": [pos for _, pos in identities],
+                "speed_pred": speed_pred,
+            }
+        )
+        derived = stage3_labels.derive_accel_column(speed_df, "speed_pred", rule)
+        a_pred = [ACCEL.index(x) for x in derived]
+
     accel_f1 = macro_f1(a_true, a_pred, len(ACCEL))
     steer_f1_official, steer_f1_incl, n_stopped = steer_metrics(a_true, s_true, s_pred)
     accel_acc = float(np.mean(np.asarray(a_true) == np.asarray(a_pred))) if a_true else 0.0
@@ -183,7 +219,9 @@ def evaluate(model, loader, device, amp, identities=None):
         "steer_macro_f1_incl_stopped": steer_f1_incl,
         "accel_acc": accel_acc,
         "steer_acc": steer_acc,
-        # best.pt selection uses the official (STOPPED-excluded) steer F1
+        # official S3 (evaluation.md / decision 10): 0.7*accel + 0.3*steer. best.pt
+        # selection uses this; mean_macro_f1 is kept for backward-comparable reference.
+        "official_s3": 0.7 * accel_f1 + 0.3 * steer_f1_official,
         "mean_macro_f1": (accel_f1 + steer_f1_official) / 2,
     }
     records = None
@@ -193,17 +231,18 @@ def evaluate(model, loader, device, amp, identities=None):
                 f"identities ({len(identities)}) != predictions ({len(a_true)}); "
                 "val loader must be shuffle=False, drop_last=False"
             )
-        records = pd.DataFrame(
-            {
-                "source_id": [sid for sid, _ in identities],
-                "sample_index": [pos for _, pos in identities],
-                "split": "validation",
-                "accel_pred": [ACCEL[i] for i in a_pred],
-                "steer_pred": [STEER[i] for i in s_pred],
-                "accel_true": [ACCEL[i] for i in a_true],
-                "steer_true": [STEER[i] for i in s_true],
-            }
-        )
+        cols = {
+            "source_id": [sid for sid, _ in identities],
+            "sample_index": [pos for _, pos in identities],
+            "split": "validation",
+            "accel_pred": [ACCEL[i] for i in a_pred],
+            "steer_pred": [STEER[i] for i in s_pred],
+            "accel_true": [ACCEL[i] for i in a_true],
+            "steer_true": [STEER[i] for i in s_true],
+        }
+        if predict_speed:
+            cols["speed_pred"] = speed_pred
+        records = pd.DataFrame(cols)
     return metrics, records
 
 
@@ -247,36 +286,47 @@ def main() -> int:
         num_workers=cfg["num_workers"], pin_memory=(device.type == "cuda"),
     )
 
-    model = Stage3MViT()
+    predict_speed = bool(cfg["predict_speed"])
+    model = Stage3MViT(predict_speed=predict_speed)
     init = init_backbone(model, cfg["init_pretrained"])
     model.to(device)
-    print(f"backbone init: {init}", flush=True)
+    print(f"backbone init: {init} | head={'speed' if predict_speed else 'accel'}", flush=True)
 
-    accel_w = class_weights(train_set.accel, len(ACCEL)).to(device)
     steer_w = class_weights(train_set.steer, len(STEER)).to(device)
-    accel_loss = nn.CrossEntropyLoss(weight=accel_w)
     steer_loss = nn.CrossEntropyLoss(weight=steer_w)
+    if predict_speed:
+        accel_loss = None
+        speed_loss = nn.MSELoss()
+    else:
+        accel_w = class_weights(train_set.accel, len(ACCEL)).to(device)
+        accel_loss = nn.CrossEntropyLoss(weight=accel_w)
+        speed_loss = None
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     grad_accum = max(1, int(cfg["grad_accum"]))
 
     val_ids = list(val_set.samples)  # (source_id, sample_index) aligned to val_loader order
-    best = {"mean_macro_f1": -1.0}
+    best = {"official_s3": -1.0}
     history = []
     for epoch in range(int(cfg["epochs"])):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         start = time.time()
         running = 0.0
-        for step, (clips, accel, steer) in enumerate(train_loader):
+        for step, (clips, accel, steer, speed) in enumerate(train_loader):
             if cfg["max_train_batches"] and step >= int(cfg["max_train_batches"]):
                 break
             clips = clips.to(device, non_blocking=True)
             accel = accel.to(device, non_blocking=True)
             steer = steer.to(device, non_blocking=True)
+            speed = speed.to(device, non_blocking=True).float()
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-                accel_logits, steer_logits = model(clips)
-                loss = (accel_loss(accel_logits, accel) + steer_loss(steer_logits, steer)) / grad_accum
+                head_out, steer_logits = model(clips)
+                if predict_speed:
+                    head_term = speed_loss(head_out.squeeze(-1).float(), speed)
+                else:
+                    head_term = accel_loss(head_out, accel)
+                loss = (head_term + steer_loss(steer_logits, steer)) / grad_accum
             scaler.scale(loss).backward()
             if (step + 1) % grad_accum == 0:
                 scaler.step(optimizer)
@@ -286,7 +336,10 @@ def main() -> int:
             if step % 100 == 0:
                 print(f"  epoch {epoch} step {step} loss {float(loss) * grad_accum:.4f}", flush=True)
         if len(val_set):
-            metrics, records = evaluate(model, val_loader, device, amp, identities=val_ids)
+            metrics, records = evaluate(
+                model, val_loader, device, amp, identities=val_ids,
+                predict_speed=predict_speed, rule=cfg["rule"],
+            )
         else:
             metrics, records = {}, None
         metrics["epoch"] = epoch
@@ -294,7 +347,7 @@ def main() -> int:
         metrics["seconds"] = round(time.time() - start, 1)
         history.append(metrics)
         print(f"epoch {epoch} done: {json.dumps(metrics)}", flush=True)
-        if metrics.get("mean_macro_f1", -1) > best["mean_macro_f1"]:
+        if metrics.get("official_s3", -1) > best["official_s3"]:
             best = metrics
             if records is not None:
                 records.to_csv(out_dir / "val_predictions.csv", index=False)
@@ -305,12 +358,13 @@ def main() -> int:
                     "classes": {"accel": ACCEL, "steer": STEER},
                     "rule": cfg["rule"],
                     "init": init,
+                    "head_kind": "speed" if predict_speed else "accel",
                     "val_metrics": metrics,
                     "label_source": "proxy_rule_v1b (not official GT)",
                 },
                 out_dir / "best.pt",
             )
-            print(f"  saved best.pt (mean_macro_f1={metrics['mean_macro_f1']:.4f})", flush=True)
+            print(f"  saved best.pt (official_s3={metrics['official_s3']:.4f})", flush=True)
 
     summary = {
         "config": {k: (v if k != "rule" else cfg["rule"]) for k, v in cfg.items()},
@@ -322,7 +376,7 @@ def main() -> int:
         "label_source": "proxy_rule_v1b (not official GT)",
     }
     (out_dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(f"wrote {out_dir / 'metrics.json'}; best mean_macro_f1={best['mean_macro_f1']:.4f}", flush=True)
+    print(f"wrote {out_dir / 'metrics.json'}; best official_s3={best.get('official_s3', -1):.4f}", flush=True)
     return 0
 
 
