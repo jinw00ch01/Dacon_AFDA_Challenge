@@ -1,0 +1,23 @@
+{
+  "_note": "S3 e003 (decision 10): same as e002 (speed_mps regression head -> derive accel via afda.stage3_labels v1b rule) with ONE change = speed_scale=30.0. e002 steer head collapsed to constant STRAIGHT (steer_macro_f1 0.307, all 2396 STRAIGHT) because the raw m/s MSE term (train_loss ep0 ~134) dominated the joint loss vs steer CE ~1.0 and starved the steer head. Dividing the speed target by 30 (~max highway m/s) keeps the regression term O(0.25), comparable to steer CE, so both heads train. Model predicts speed/30; eval and submission multiply back by 30 before the rule derive. out_dir isolated so v001 stage3 (e001) and stage3_e002 are preserved; promote only if official_s3 beats e001 AND steer does NOT collapse (>1 predicted steer class). Proxy targets are self-diagnostic, not official GT.",
+  "experiment_id": "s3-e003",
+  "stage": "stage3",
+  "cache_dir": "data/derived/s3_clip_cache_v1",
+  "aux_csv": "data/derived/releases/s3-aux-rules-v1b-20260925/s3_auxiliary_10hz.csv",
+  "rule": {"window": 5, "v_stop": 0.5, "a_db": 0.2, "s_th": 4.5, "bias": -0.3},
+  "predict_speed": true,
+  "speed_scale": 30.0,
+  "epochs": 3,
+  "batch_size": 2,
+  "grad_accum": 4,
+  "lr": 3e-4,
+  "weight_decay": 0.05,
+  "seed": 0,
+  "num_workers": 4,
+  "window": 16,
+  "train_stride": 2,
+  "val_stride": 1,
+  "init_pretrained": true,
+  "amp": true,
+  "out_dir": "models/stage3_e003"
+}

@@ -312,6 +312,9 @@ def predict_stage3(data_dir, model_dir):
     # e001 accel-class checkpoints keep the original path byte-for-byte.
     predict_speed = checkpoint.get("head_kind") == "speed" or "speed.weight" in state
     rule = checkpoint.get("rule", S3_RULE)
+    # e003 checkpoints predict speed/speed_scale; recover m/s before the rule derive.
+    # Default 1.0 keeps e001 (accel head) and e002 (no key) byte-identical.
+    speed_scale = float(checkpoint.get("speed_scale", 1.0))
     model = _Stage3MViT(predict_speed=predict_speed)
     model.load_state_dict(state)
     model.to(device).eval()
@@ -336,6 +339,7 @@ def predict_stage3(data_dir, model_dir):
                     head_predictions.extend(head_logits.argmax(1).cpu().tolist())
                 steer_predictions.extend(steer_logits.argmax(1).cpu().tolist())
             if predict_speed:
+                head_predictions = [v * speed_scale for v in head_predictions]
                 accel_labels = _accel_from_speed(head_predictions, rule)
             else:
                 accel_labels = [ACCEL[i] for i in head_predictions]

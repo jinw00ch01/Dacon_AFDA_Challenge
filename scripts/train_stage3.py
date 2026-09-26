@@ -63,6 +63,13 @@ DEFAULTS = {
     # e002: regress speed_mps then derive the accel class (afda.stage3_labels);
     # False keeps the e001 4-class accel classification head unchanged.
     "predict_speed": False,
+    # e003: divide the speed target by speed_scale before the MSE loss so the
+    # regression term stops dominating the joint loss and starving the steer head
+    # (e002 steer collapsed to constant STRAIGHT because raw m/s MSE started ~134
+    # vs steer CE ~1.0). The model then predicts speed/scale; eval and submission
+    # multiply the prediction back by speed_scale before deriving accel. Default
+    # 1.0 leaves e001/e002 byte-identical.
+    "speed_scale": 1.0,
 }
 
 
@@ -166,7 +173,7 @@ def steer_metrics(a_true, s_true, s_pred):
 
 
 @torch.inference_mode()
-def evaluate(model, loader, device, amp, identities=None, predict_speed=False, rule=None):
+def evaluate(model, loader, device, amp, identities=None, predict_speed=False, rule=None, speed_scale=1.0):
     """Return summary metrics and, if `identities` (list of (source_id, sample_index))
     aligned to the loader's fixed order is given, per-sample prediction records.
 
@@ -184,7 +191,8 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
         a_true.extend(accel.tolist())
         s_true.extend(steer.tolist())
         if predict_speed:
-            speed_pred.extend(head_out.squeeze(-1).float().cpu().tolist())
+            # model predicts speed/speed_scale; recover m/s for the rule-based derive
+            speed_pred.extend((head_out.squeeze(-1).float() * speed_scale).cpu().tolist())
         else:
             a_pred.extend(head_out.argmax(1).cpu().tolist())
 
@@ -287,6 +295,7 @@ def main() -> int:
     )
 
     predict_speed = bool(cfg["predict_speed"])
+    speed_scale = float(cfg.get("speed_scale", 1.0))
     model = Stage3MViT(predict_speed=predict_speed)
     init = init_backbone(model, cfg["init_pretrained"])
     model.to(device)
@@ -323,7 +332,7 @@ def main() -> int:
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                 head_out, steer_logits = model(clips)
                 if predict_speed:
-                    head_term = speed_loss(head_out.squeeze(-1).float(), speed)
+                    head_term = speed_loss(head_out.squeeze(-1).float(), speed / speed_scale)
                 else:
                     head_term = accel_loss(head_out, accel)
                 loss = (head_term + steer_loss(steer_logits, steer)) / grad_accum
@@ -338,7 +347,7 @@ def main() -> int:
         if len(val_set):
             metrics, records = evaluate(
                 model, val_loader, device, amp, identities=val_ids,
-                predict_speed=predict_speed, rule=cfg["rule"],
+                predict_speed=predict_speed, rule=cfg["rule"], speed_scale=speed_scale,
             )
         else:
             metrics, records = {}, None
@@ -359,6 +368,7 @@ def main() -> int:
                     "rule": cfg["rule"],
                     "init": init,
                     "head_kind": "speed" if predict_speed else "accel",
+                    "speed_scale": speed_scale,
                     "val_metrics": metrics,
                     "label_source": "proxy_rule_v1b (not official GT)",
                 },
