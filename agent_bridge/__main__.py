@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 from . import jobs, packets, runner
-from .state import ROOT, agent_root, load_config, load_policy, read_ledger, sandbox_package, strict_load
+from .state import ROOT, agent_root, ledger, load_config, load_policy, read_ledger, sandbox_package, strict_load
 
 
 def _print(value):
@@ -32,6 +32,8 @@ def build_parser():
                        ("pause", "Stop starting new cycles (jobs continue)"), ("resume", "Undo pause/stop"),
                        ("stop", "Ask the loop to exit")):
         sub.add_parser(name, parents=[common], help=text)
+    wake = sub.add_parser("wake", parents=[common], help="Operator nudge: start a cycle as soon as limits allow, with a reason")
+    wake.add_argument("--reason", required=True)
     publish = sub.add_parser("publish", parents=[common], help="Publish a packet from a JSON body (+ optional attachment folder)")
     publish.add_argument("--kind", required=True, choices=sorted(packets.KINDS - {"ack"}))
     publish.add_argument("--body", required=True, type=Path)
@@ -56,7 +58,7 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config)
-    writes_state = args.command in {"loop", "tick", "publish", "pause", "resume", "stop"} or (
+    writes_state = args.command in {"loop", "tick", "publish", "pause", "resume", "stop", "wake"} or (
         args.command == "job" and args.job_command in {"start", "cancel"})
     package = sandbox_package(cfg["state_root"]) if writes_state else None
     if package:
@@ -82,6 +84,11 @@ def main(argv=None):
         result = runner.probe(cfg, load_policy(cfg["role"]))
         _print(result)
         return 0 if result["ok"] else 1
+    elif args.command == "wake":
+        # Reuses the agent's own next_wake mechanism; budgets, pause and backoff still apply.
+        with ledger(cfg) as book:
+            book["next_wake"] = {"mode": "asap", "reason": "운영자 요청: " + args.reason}
+            _print({"next_wake": book["next_wake"]})
     elif args.command == "inbox":
         book = read_ledger(cfg)
         _print([{"packet_id": p, **{k: e.get(k) for k in ("kind", "status", "handled", "subject", "experiment_id", "imported_utc", "local_path", "detail")}}

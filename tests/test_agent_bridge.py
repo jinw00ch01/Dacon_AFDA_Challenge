@@ -247,6 +247,23 @@ class AgentBridgeTests(unittest.TestCase):
             self.assertEqual(cli.main(["--config", str(config), "pause"]), 2)
         self.assertFalse((Path(self.pro["state_root"]) / "agent" / "PAUSE").exists())
 
+    def test_wake_command_requests_a_cycle_with_reason(self):
+        from unittest.mock import patch
+        import sys
+        from agent_bridge import __main__ as cli
+        config = self.base / "local-exchange.json"
+        config.write_text(json.dumps({**self.pro, "python": sys.executable}), encoding="utf-8")
+        policy = load_policy("pro360")
+        with ledger(self.pro) as book:
+            book["next_wake"] = {"mode": "on_event", "reason": "waiting"}
+            book["cycles"] = [{"cycle_id": "c0", "ended_utc": "2000-01-01T00:00:00Z", "status": "succeeded"}]
+        with patch.object(cli, "sandbox_package", return_value=None), patch.object(cli, "_print"):
+            self.assertEqual(cli.main(["--config", str(config), "wake", "--reason", "결정 9 반영"]), 0)
+        with ledger(self.pro) as book:
+            reasons, blocked = runner.wake_reasons(self.pro, policy, book)
+        self.assertIsNone(blocked)
+        self.assertEqual([(r["type"], r["reason"]) for r in reasons], [("scheduled", "운영자 요청: 결정 9 반영")])
+
     def test_context_lists_recently_sent_packets(self):
         policy = load_policy("pro360")
         packet_id, manifest = packets.publish(self.pro, "qa", {"subject": "stage2 labels v1"})

@@ -64,6 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_claude_agents.
 .\.venv-<role>\Scripts\python.exe -m agent_bridge job list
 .\.venv-<role>\Scripts\python.exe -m agent_bridge pause       # 새 사이클 중지 (job은 계속)
 .\.venv-<role>\Scripts\python.exe -m agent_bridge resume
+.\.venv-<role>\Scripts\python.exe -m agent_bridge wake --reason "CLAUDE.md 결정 N 반영"   # 규칙을 바꾼 뒤 바로 사이클 시작
 powershell -File scripts\setup_claude_agents.ps1 -Role <role> -Uninstall   # 루프 작업 제거
 ```
 
