@@ -25,9 +25,15 @@ def main():
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--positive', type=int, default=80)
     parser.add_argument('--negative', type=int, default=24)
+    # Decision 8 (2026-09-25 14:20) raised the caps for the v002 data expansion. Use a NEW
+    # --out-version so an existing review session (e.g. v1) is never rewritten; the fixed
+    # rng seed makes each version a reproducible superset of the smaller ones.
+    parser.add_argument('--out-version', default='v1')
     args = parser.parse_args()
-    if not 1 <= args.positive <= 100 or not 0 <= args.negative <= 50:
-        parser.error('Use 1..100 positive and 0..50 negative videos')
+    if not 1 <= args.positive <= 400 or not 0 <= args.negative <= 100:
+        parser.error('Use 1..400 positive and 0..100 negative videos')
+    global OUT
+    OUT = ROOT / ('data/external/nexar_subset_' + args.out_version)
     api = HfApi(token=False if args.plan_only else None)
     info = api.dataset_info(REPO,revision=REVISION,files_metadata=True)
     rng=random.Random(20260924)
@@ -39,8 +45,8 @@ def main():
             raise ValueError('Insufficient source candidates')
         selected.extend(pool[:count])
     total=sum(x.size or 0 for x in selected)
-    if any(x.size is None for x in selected) or total>3*1024**3:
-        raise ValueError('Unknown size or 3 GiB budget exceeded; reduce counts')
+    if any(x.size is None for x in selected) or total>20*1024**3:
+        raise ValueError('Unknown size or 20 GiB budget exceeded; reduce counts')
     if shutil.disk_usage(ROOT).free<40*1024**3:
         raise RuntimeError('Keep 40 GiB free on Ultra')
     OUT.mkdir(parents=True,exist_ok=True)
