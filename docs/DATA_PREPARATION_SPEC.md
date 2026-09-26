@@ -75,8 +75,10 @@ Nexar의 기존 audit는 전체 디코드 수와 nominal FPS를 확인했지만 
 | lane_entry_suitable | yes/no/uncertain; 피해 차량·가해 의심 차량의 쌍과 차선 식별 |
 | collision_frame | 해당 두 차량의 실제 접촉이 처음 확인되는 원본 프레임; 프레임 범위 내 정수 |
 | entry_frame | 피해 차량이 가해 의심 차량의 차선에 처음 진입하는 원본 프레임; 화면에 처음 보이는 시점과 구분 |
-| evasion_space | 충돌 시점의 회피 공간 0/1; 판단 근거를 적고 애매하면 미정답 |
-| entry_side | 화면 기준 LEFT/RIGHT; FRONT 같은 새 제출 범주를 만들지 않음 |
+| evasion_space | 충돌 당시 피의차량(블랙박스 차량)이 진행하거나 회피할 수 있는 공간이 있었으면 1, 없었으면 0; 판단 근거를 적고 애매하면 미정답 |
+| entry_side | 블랙박스 화면 기준으로 피해차량(끼어든 차량)이 들어온 쪽: 화면 왼쪽이면 LEFT, 오른쪽이면 RIGHT. FRONT 같은 새 제출 범주를 만들지 않음 |
+
+공식 역할 정의([Stage별 공지](https://dacon.io/competitions/official/236753/talkboard/417186)): 피의차량 = 블랙박스가 설치된 차량, 피해차량 = 피의차량의 차선에 진입해 피의차량과 충돌한 차량.
 | origin_group_confirmed, split | 중복 사건 확인 및 동결된 split 참조 |
 | review_status | unreviewed/needs_review/reviewed/excluded; 검토자·UTC·guideline 버전은 sidecar에 기록 |
 | validity mask | collision_valid/entry_valid/evasion_valid/side_valid 각각 Boolean |

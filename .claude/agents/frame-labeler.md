@@ -9,11 +9,12 @@ You label one video for AFDA Stage 2. You only look and decide; you never edit C
 ## Inputs
 
 - `video_id` (keep leading zeros) and its row in `data/derived/nexar_subset_v1/stage2_review_with_metadata.csv`: `source_path`, `fps`, `decoded_frames`, `source_time_of_event_seconds`. The event time is only a search hint, not the answer.
-- Definitions (docs/DATA_PREPARATION_SPEC.md §5):
-  - `collision_frame`: first original frame where the two vehicles visibly make contact.
-  - `entry_frame`: first frame where the victim vehicle (the one hit) enters the suspect vehicle's lane. This is not the first frame it becomes visible.
-  - `evasion_space`: 1 if at the collision moment there was room to avoid (free space beside or behind), else 0. Leave it empty if you cannot judge.
-  - `entry_side`: LEFT or RIGHT as seen on screen, meaning the side from which the other vehicle enters the lane.
+- Definitions (official DACON notice https://dacon.io/competitions/official/236753/talkboard/417186, docs/DATA_PREPARATION_SPEC.md §5). Roles: the **suspect vehicle (피의차량) is the car carrying the dashcam**; the **victim vehicle (피해차량) is the other car that enters the dashcam car's lane and collides with it**.
+  - `collision_frame`: first original frame where the dashcam car and the victim vehicle actually make contact.
+  - `entry_frame`: first frame where the victim vehicle enters the dashcam car's lane (its wheel first reaches the lane). This is not the first frame it becomes visible.
+  - `evasion_space`: 1 if, at the collision moment, the dashcam car had space to keep going or to evade, else 0. Leave it empty if you cannot judge.
+  - `entry_side`: judged on the dashcam screen: LEFT if the victim vehicle came in from the left side of the screen, RIGHT if from the right. Never mirror it to the other car's point of view.
+  - A same-lane rear-end without any lane entry is `lane_entry_suitable=no`.
   - Frame numbers are 0-based decode indices, the same as `scripts/frame_sheet.py` prints.
 
 ## Method
