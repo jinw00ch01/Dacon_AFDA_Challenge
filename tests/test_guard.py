@@ -82,6 +82,17 @@ class GuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(shell(command, role="pro360"), "deny")
 
+    def test_nested_claude_launches_denied_but_mentions_allowed(self):
+        for command in ("C:/Users/x/AppData/Roaming/npm/claude.cmd -p hi", "npx @anthropic-ai/claude-code -p hi",
+                        "cmd /c claude -p hi", 'powershell -Command "claude -p hi"', "timeout 60 claude -p hi",
+                        'python -c "import subprocess; subprocess.run([\'claude\', \'-p\', \'x\'])"'):
+            with self.subTest(command=command):
+                self.assertEqual(shell(command), "deny")
+        for command in ('git commit -m "Add labels\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"',
+                        "echo claude", "grep -n claude docs/CLAUDE_OPERATION.md", "git log --grep claude -3"):
+            with self.subTest(command=command):
+                self.assertEqual(shell(command, role="ultra5060"), "allow")
+
     def test_unknown_programs_and_nested_claude_denied_when_unattended(self):
         self.assertEqual(shell("netcat -l 9000"), "deny")
         self.assertEqual(shell("claude -p hello"), "deny")

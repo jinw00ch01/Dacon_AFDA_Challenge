@@ -224,7 +224,7 @@ def check_shell(command, role, autonomous, project, exchange_root, cwd):
                 return "deny", reason
         if re.search(r"\bpython[\w.]*\b.*\s-c\s", seg) and PY_WRITE.search(seg) and (mentions or (autonomous and re.search(SELF_TOKEN, seg))):
             return "deny", "Inline Python may not modify protected paths or guardrails."
-        if autonomous and re.search(r"(^|[\s;&|(\"'/])claude(\.exe|\.cmd|\.ps1)?(\s|$)", seg):
+        if autonomous and launches_claude(verb, words):
             return "deny", "Unattended agents may not start nested Claude sessions."
     # Role git ownership binds the unattended agent; a supervised interactive session is the human's call.
     if autonomous and role == "pro360" and re.search(r"\bgit\b[^;&|\n]*\bpush\b", text):
@@ -245,6 +245,25 @@ def check_shell(command, role, autonomous, project, exchange_root, cwd):
                                 "(.venv-<role>/Scripts/python.exe) with a script in tools/ or scripts/, git, or standard file utilities.")
         return "allow", "AFDA guard: allowlisted command"
     return None, None
+
+
+LAUNCHERS = {"cmd", "powershell", "pwsh", "bash", "sh", "npx", "start", "start-process", "saps", "wsl", "env", "xargs"}
+CLAUDE_WORD = re.compile(r"(^|[\s\"'(/;&|`])claude(-code)?(\.exe|\.cmd|\.ps1)?(?=$|[\s\"'`;&|)])")
+
+
+def launches_claude(verb, words):
+    """True if a simple command starts the Claude CLI: as the program itself, through a shell or launcher,
+    or as a quoted argv element in inline Python. Text that only mentions Claude (a commit message
+    trailer, an echo, a grep pattern) is not a launch."""
+    name = re.sub(r"\.(ps1|exe|cmd)$", "", verb)
+    if name in {"claude", "claude-code"}:
+        return True
+    rest = " ".join(words[1:])
+    if name in LAUNCHERS:
+        return bool(CLAUDE_WORD.search(rest))
+    if name.startswith("python") or name == "py":
+        return bool(re.search(r"[\"']claude(\.exe|\.cmd)?[\"']", rest))
+    return False
 
 
 def _git_dir(command, cwd):
