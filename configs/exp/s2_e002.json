@@ -1,0 +1,14 @@
+{
+  "_note": "S2 e002 = e001 + ONE change: random temporal crop of the training feature sequence (train_crop_frames=512). Decision 823680cb accepted this to remove the absolute collision/entry position shortcut (e001 val time_mae_s 7.404 was ~11x worse than the constant-position baseline). Eval always uses the FULL sequence, so the val metric stays comparable to e001 on release s2-labels-v6. Sequences are 540-1286 frames @ ~30fps; collision positions span 245-1093, so a 512-frame window fully randomizes the within-window target index. const_baseline (train-median position) is reported in metrics.json as the score to beat. Labels are agent_labels_v6 proxy (NOT official GT). Falsification: if crop MAE does not beat the constant-prediction MAE on the same val, hold S2 retraining until the nexar_event expansion lands.",
+  "experiment_id": "s2-e002",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v1",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2",
+  "train_crop_frames": 512
+}

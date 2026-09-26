@@ -150,5 +150,66 @@ class TrainingPathTest(unittest.TestCase):
         self.assertIn(m["side_acc"], (0.0, 1.0))
 
 
+class RandomTimeCropTest(unittest.TestCase):
+    def test_noop_when_disabled_or_too_short(self):
+        feats = np.zeros((100, 512), np.float32)
+        rng = np.random.RandomState(0)
+        # crop disabled
+        f, c, e = TR.random_time_crop(feats, 40, 20, None, rng)
+        self.assertEqual(f.shape[0], 100)
+        self.assertEqual((c, e), (40, 20))
+        # T <= crop_frames -> unchanged
+        f, c, e = TR.random_time_crop(feats, 40, 20, 100, rng)
+        self.assertEqual(f.shape[0], 100)
+        self.assertEqual((c, e), (40, 20))
+
+    def test_anchor_stays_inside_and_targets_remap(self):
+        feats = np.arange(1000, dtype=np.float32).reshape(1000, 1) * np.ones((1, 512), np.float32)
+        for seed in range(50):
+            rng = np.random.RandomState(seed)
+            f, c, e = TR.random_time_crop(feats, 600, 610, 256, rng)
+            self.assertEqual(f.shape[0], 256)
+            # at least one target survives (the anchor), and survivors are in-range
+            self.assertTrue(c is not None or e is not None)
+            for q, orig in ((c, 600), (e, 610)):
+                if q is not None:
+                    self.assertTrue(0 <= q < 256)
+                    # window-relative index maps back to the same original feature row
+                    np.testing.assert_array_equal(f[q], feats[orig])
+
+    def test_deterministic_with_seed(self):
+        feats = np.random.default_rng(0).random((900, 512)).astype(np.float32)
+        a = TR.random_time_crop(feats, 500, None, 256, np.random.RandomState(7))
+        b = TR.random_time_crop(feats, 500, None, 256, np.random.RandomState(7))
+        np.testing.assert_array_equal(a[0], b[0])
+        self.assertEqual((a[1], a[2]), (b[1], b[2]))
+
+    def test_target_outside_window_dropped(self):
+        feats = np.zeros((1000, 512), np.float32)
+        # gap is 800 > window 256: exactly one target (the anchor) can survive
+        for seed in range(30):
+            rng = np.random.RandomState(seed)
+            _, c, e = TR.random_time_crop(feats, 100, 900, 256, rng)
+            survivors = [x for x in (c, e) if x is not None]
+            self.assertEqual(len(survivors), 1)  # anchor kept, the other dropped
+
+
+class ConstBaselineTest(unittest.TestCase):
+    def test_uses_train_median_and_reports_seconds(self):
+        train = [
+            {"feats": np.zeros((100, 1), np.float32), "fps": 10.0, "collision": 40, "entry": 20},
+            {"feats": np.zeros((100, 1), np.float32), "fps": 10.0, "collision": 60, "entry": 30},
+        ]
+        val = [
+            {"feats": np.zeros((100, 1), np.float32), "fps": 10.0, "collision": 50, "entry": None},
+        ]
+        b = TR.const_baseline(train, val)
+        self.assertEqual(b["collision_frame"], 50)  # median(40,60)
+        self.assertEqual(b["entry_frame"], 25)       # median(20,30) rounds to 25
+        self.assertAlmostEqual(b["collision_mae_s"], 0.0)  # |50-50|/10
+        self.assertIsNone(b["entry_mae_s"])          # no val entry labels
+        self.assertAlmostEqual(b["time_mae_s"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

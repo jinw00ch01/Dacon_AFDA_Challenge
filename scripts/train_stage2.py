@@ -53,6 +53,11 @@ DEFAULTS = {
     "amp": True,
     "out_dir": "models/stage2",
     "max_videos": None,
+    # e002 single change: random temporal crop of the training feature sequence so
+    # the absolute collision/entry position stops being a shortcut. None => no crop
+    # (e001 behaviour). Eval always uses the full sequence, so the val metric stays
+    # comparable across e001/e002.
+    "train_crop_frames": None,
 }
 
 
@@ -98,6 +103,68 @@ def class_weights(labels, n_classes):
     counts = np.where(counts == 0, 1.0, counts)
     w = counts.sum() / (n_classes * counts)
     return torch.tensor(w, dtype=torch.float32)
+
+
+def random_time_crop(feats, collision, entry, crop_frames, rng):
+    """Crop a random window of length ``crop_frames`` from a (T,512) feature seq.
+
+    Removes the absolute-position shortcut: the window is placed so that a randomly
+    chosen present target (collision/entry) stays inside it, and each target is
+    remapped to the window-relative index (or dropped to None if it falls outside).
+    Returns (cropped_feats, new_collision, new_entry). No-op when crop_frames is
+    None/<=0 or T <= crop_frames, so e001 runs are unchanged.
+    """
+    t = feats.shape[0]
+    if not crop_frames or crop_frames <= 0 or t <= crop_frames:
+        return feats, collision, entry
+    length = int(crop_frames)
+    anchors = [p for p in (collision, entry) if p is not None]
+    if anchors:
+        anchor = anchors[int(rng.randint(len(anchors)))]
+        lo = max(0, anchor - length + 1)
+        hi = min(anchor, t - length)  # keep anchor inside [start, start+length)
+        start = int(rng.randint(lo, hi + 1)) if hi >= lo else max(0, min(anchor, t - length))
+    else:
+        start = int(rng.randint(0, t - length + 1))
+    end = start + length
+
+    def _remap(p):
+        if p is None:
+            return None
+        q = p - start
+        return q if 0 <= q < length else None
+
+    return feats[start:end], _remap(collision), _remap(entry)
+
+
+def const_baseline(train_items, val_items):
+    """Constant-position predictor MAE (seconds) using the train median position.
+
+    The decision (823680cb) requires reporting this alongside the model: it is the
+    score to beat. Predicts the train-median collision/entry frame for every val
+    video (clipped to that video's length), converted to seconds by the video fps.
+    """
+    def _median(items, key):
+        vals = [it[key] for it in items if it[key] is not None]
+        return int(round(float(np.median(vals)))) if vals else None
+
+    def _mae(pos, key):
+        errs = []
+        for it in val_items:
+            if it[key] is None or pos is None:
+                continue
+            t = it["feats"].shape[0]
+            errs.append(abs(int(np.clip(pos, 0, t - 1)) - it[key]) / it["fps"])
+        return float(np.mean(errs)) if errs else None
+
+    c_pos, e_pos = _median(train_items, "collision"), _median(train_items, "entry")
+    c_mae, e_mae = _mae(c_pos, "collision"), _mae(e_pos, "entry")
+    finite = [m for m in (c_mae, e_mae) if m is not None]
+    return {
+        "collision_frame": c_pos, "entry_frame": e_pos,
+        "collision_mae_s": c_mae, "entry_mae_s": e_mae,
+        "time_mae_s": (float(np.mean(finite)) if finite else None),
+    }
 
 
 def _logits(model, x):
@@ -198,16 +265,18 @@ def main() -> int:
         running, start = 0.0, time.time()
         for step, i in enumerate(order):
             it = train[i]
-            x = torch.from_numpy(it["feats"]).unsqueeze(0).to(device)
+            feats, c_tgt, e_tgt = random_time_crop(
+                it["feats"], it["collision"], it["entry"], cfg["train_crop_frames"], rng)
+            x = torch.from_numpy(feats).unsqueeze(0).to(device)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                 h, cl, el = _logits(model, x)
                 loss = torch.zeros((), device=device)
-                if it["collision"] is not None:
-                    loss = loss + ce(cl, torch.tensor([it["collision"]], device=device))
-                if it["entry"] is not None:
-                    loss = loss + ce(el, torch.tensor([it["entry"]], device=device))
-                c_idx = it["collision"] if it["collision"] is not None else int(cl.argmax(1))
-                e_idx = it["entry"] if it["entry"] is not None else int(el.argmax(1))
+                if c_tgt is not None:
+                    loss = loss + ce(cl, torch.tensor([c_tgt], device=device))
+                if e_tgt is not None:
+                    loss = loss + ce(el, torch.tensor([e_tgt], device=device))
+                c_idx = c_tgt if c_tgt is not None else int(cl.argmax(1))
+                e_idx = e_tgt if e_tgt is not None else int(el.argmax(1))
                 scene = _scene(model, h, c_idx, e_idx)
                 if it["evasion"] is not None:
                     loss = loss + nn.functional.cross_entropy(
@@ -246,11 +315,15 @@ def main() -> int:
                     "label_source": "agent_labels_v6 (not official GT)"}, out_dir / "best.pt")
         print("  saved best.pt (final epoch; no val time labels)", flush=True)
 
+    const = const_baseline(train, val_items) if val_items else None
+    if const:
+        print(f"const baseline (train-median position): {json.dumps(const)}", flush=True)
     summary = {
         "config": cfg,
         "train_videos": len(train),
         "val_videos": len(val_items),
         "best": best if best["time_mae_s"] != float("inf") else None,
+        "const_baseline": const,
         "history": history,
         "label_source": "agent_labels_v6 (not official GT)",
     }
