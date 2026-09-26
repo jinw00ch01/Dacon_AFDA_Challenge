@@ -32,8 +32,25 @@ class S1SynthDigitalTest(unittest.TestCase):
         self.assertLess(sd.next_sigma(3.0, 1.9, 1.3), 3.0)
         self.assertGreater(sd.next_sigma(3.0, 1.1, 1.3), 3.0)
         self.assertAlmostEqual(sd.next_sigma(3.0, 1.3, 1.3), 3.0, places=6)
-        self.assertEqual(sd.next_sigma(3.0, 1.0, 1.45), 6.0)
-        self.assertEqual(sd.next_sigma(3.0, 5.0, 1.1), 0.8)
+        self.assertEqual(sd.next_sigma(3.0, 1.0, 1.45), sd.SIGMA_MAX)
+        self.assertEqual(sd.next_sigma(3.0, 5.0, 1.1), sd.SIGMA_MIN)
+
+    def test_calib_step_brackets_thresholded_response(self):
+        # below target only: rescale upward
+        self.assertGreater(sd.calib_step([(3.0, 1.0)], 1.3), 3.0)
+        # bracketed: stays strictly inside the bracket, nearer the closer side
+        s = sd.calib_step([(3.0, 1.0), (12.0, 2.0), (6.0, 1.2)], 1.3)
+        self.assertTrue(6.0 < s < 12.0)
+        self.assertLess(s, 9.0)
+        # simulated CRF threshold: grain below sigma 4 vanishes, then HF grows linearly
+        def enc(sig):
+            return 1.0 + max(0.0, sig - 4.0) * 0.08
+        tried = [(3.0, enc(3.0))]
+        for _ in range(sd.MAX_ATTEMPTS - 1):
+            sig = sd.calib_step(tried, 1.3)
+            tried.append((sig, enc(sig)))
+        best = sd.hf_close(tried, 1.3)
+        self.assertLessEqual(abs(best[1] - 1.3), sd.HF_TOL)
 
     def test_crop_16x9(self):
         self.assertEqual(sd.crop_16x9(962, 1280), (121, 841, 0, 1280))
