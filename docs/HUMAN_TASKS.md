@@ -89,6 +89,8 @@
 
 확신이 없는 칸은 **비워 둔다.** 0이나 -1을 넣지 않는다.
 
+**positive인데 접촉이 없는 영상(near-miss)**: Nexar의 positive는 "충돌했거나 충돌이 임박했던 사건"이라 near-miss가 섞여 있다(Nexar 데이터셋 정의이며, 우리는 train/positive에서 파일명 순으로 80개를 받았다). 이때 `actual_contact=no`로 두고, `collision_frame`과 `evasion_space`는 비운다(회피 공간은 "충돌 당시" 기준이라 정의되지 않음). 끼어들기가 분명히 보이면 `entry_frame`, `entry_side`를 적고 `lane_entry_suitable=yes`로 둔다(진입 학습 예시로 쓰인다). 끼어들기가 없거나 애매하면 비우고 `lane_entry_suitable=no`로 둔다. 작업표의 `nexar_event_frame`은 Nexar가 기록한 사건 시각이라 장면을 찾는 데 쓴다. `uncertain`(접촉이 가려 안 보임)도 같게 한다.
+
 **같은 차로 추돌**(상대 차량이 영상 처음부터 촬영차량 차선에 있었음): 진입이 없으니 `entry_frame`, `entry_side`는 비우고 `lane_entry_suitable=no`로 둔다. `actual_contact`, `collision_frame`은 그대로 적고, `evasion_space`는 판단되면 적는다.
 **예외: 끼어든 뒤 급정거해서 들이받은 경우**는 진입이 있는 사례다. 영상 안에서 끼어드는 장면이 보이면 그 순간을 `entry_frame`에, 들어온 화면 쪽을 `entry_side`에 적고 `lane_entry_suitable=yes`로 둔다.
 제출 파일에서는 모든 영상에 네 항목을 채워야 하지만, 그건 모델이 맡는다. 검수에서는 정의되지 않는 값을 만들지 않는다.

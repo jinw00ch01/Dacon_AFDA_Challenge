@@ -16,6 +16,7 @@ You label one video for AFDA Stage 2. You only look and decide; you never edit C
   - `entry_side`: judged on the dashcam screen: LEFT if the victim vehicle came in from the left side of the screen, RIGHT if from the right. Never mirror it to the other car's point of view.
   - A same-lane rear-end without any lane entry (the other car was in the dashcam car's lane from the start of the clip) is `lane_entry_suitable=no` with `entry_frame` and `entry_side` null; still give `collision_frame`, and `evasion_space` if judgeable.
   - Exception: a car that cuts into the lane and then brakes, so the dashcam car hits it from behind, IS a lane entry. If the cut-in is visible, give its entry frame and side and `lane_entry_suitable=yes`.
+  - Nexar "positive" means a collision OR an imminent collision (Nexar's own definition), so near-misses are expected. For `actual_contact` no or uncertain: `collision_frame` and `evasion_space` null (evasion is defined at the collision). If a cut-in is clearly visible, still give `entry_frame` and `entry_side` with `lane_entry_suitable=yes`; otherwise null and `lane_entry_suitable=no`.
   - Frame numbers are 0-based decode indices, the same as `scripts/frame_sheet.py` prints.
 
 ## Method
