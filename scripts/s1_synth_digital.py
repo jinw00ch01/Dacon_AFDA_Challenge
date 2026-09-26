@@ -9,9 +9,10 @@ No perspective, bezel, blur or desaturation. This generator mirrors that pipelin
   <SRC>_W<w>_ORIG.mp4       window w of the playback clip, 16:9 centre crop, 1280x720, 10 fps,
                             50 frames, OpenCV mp4v writer (like the Baseline originals)
   <SRC>_W<w>_DIG<k>.mp4     decode the ORIG file -> luma grain + contrast/black tone -> ffmpeg libx264
-                            (default preset, CRF 23). Grain sigma is calibrated per clip (one
-                            re-encode) so the fine-detail HF ratio vs ORIG hits a seeded target
-                            in 1.1-1.45, the range of the Baseline pairs.
+                            (default preset, CRF 23). Grain sigma is calibrated per clip (up to
+                            MAX_ATTEMPTS re-encodes, secant inside a bracket) so the fine-detail
+                            HF ratio vs ORIG is within HF_TOL of a seeded target in 1.1-1.45, the
+                            range of the Baseline pairs; params record calib_attempts/calib_ok.
 
 Every output of a source keeps the source split (s23_capture_ready.csv confirmed_split). A manifest
 with parameters and SHA-256 is written next to the videos. All outputs are "synthetic".
@@ -51,10 +52,34 @@ def hf_ratio(orig_frames, rec_frames):
     return float(np.mean([hf_std(rec_frames[i]) / hf_std(orig_frames[i]) for i in idx]))
 
 
+SIGMA_MIN, SIGMA_MAX = 0.8, 12.0
+HF_TOL = 0.04  # accept |measured - target| <= HF_TOL
+MAX_ATTEMPTS = 8
+
+
 def next_sigma(sigma, measured, target):
     """Grain adds HF variance ~ sigma^2: rescale sigma so measured^2-1 hits target^2-1."""
     scale = ((target ** 2 - 1) / max(measured ** 2 - 1, 0.01)) ** 0.5
-    return float(min(6.0, max(0.8, sigma * scale)))
+    return float(min(SIGMA_MAX, max(SIGMA_MIN, sigma * scale)))
+
+
+def calib_step(tried, target):
+    """Next grain sigma from all (sigma, measured) tries. x264 CRF quantises weak grain away, so the
+    response is thresholded and one rescale step is not enough: once the target is bracketed, take
+    the secant between the closest tries on each side, kept to the middle 35-65% of the bracket
+    (a steep, convex response makes plain regula falsi stall on one side), else rescale."""
+    below = [t for t in tried if t[1] < target]
+    above = [t for t in tried if t[1] >= target]
+    if below and above:
+        (s0, m0), (s1, m1) = max(below, key=lambda t: t[1]), min(above, key=lambda t: t[1])
+        frac = (target - m0) / max(m1 - m0, 1e-6)
+        return float(s0 + min(0.65, max(0.35, frac)) * (s1 - s0))
+    s, m = tried[-1]
+    return next_sigma(s, m, target)
+
+
+def hf_close(tried, target):
+    return min(tried, key=lambda t: abs(t[1] - target))
 
 
 def crop_16x9(h, w):
@@ -144,13 +169,26 @@ def process_source(row, root, out_dir, ffmpeg, windows, variants, seed):
             p = sample_params(rng)
             noise_seed = rng.randint(0, 2**31)
             path = out_dir / f"{src}_W{w}_DIG{k}.mp4"
-            for attempt in range(2):  # guess, then one calibrated re-encode
+            tried = []
+            while True:  # re-encode until the HF ratio is within HF_TOL of the target
                 nrng = np.random.default_rng(noise_seed)
                 write_x264(ffmpeg, path, [tone(f, nrng, p) for f in decoded], p["crf"])
                 p["measured_hf_ratio"] = round(hf_ratio(decoded, read_frames(path)[0]), 3)
-                if attempt == 0:
-                    p["grain_sigma"] = round(next_sigma(p["grain_sigma"], p["measured_hf_ratio"],
-                                                        p["target_hf_ratio"]), 2)
+                tried.append((p["grain_sigma"], p["measured_hf_ratio"]))
+                if abs(p["measured_hf_ratio"] - p["target_hf_ratio"]) <= HF_TOL or len(tried) >= MAX_ATTEMPTS:
+                    break
+                sigma = round(calib_step(tried, p["target_hf_ratio"]), 2)
+                if any(abs(sigma - s) < 0.01 for s, _ in tried):  # clamped or converged
+                    break
+                p["grain_sigma"] = sigma
+            best_sigma, _ = hf_close(tried, p["target_hf_ratio"])
+            if best_sigma != p["grain_sigma"]:  # last try was not the closest: rebuild the closest
+                p["grain_sigma"] = best_sigma
+                nrng = np.random.default_rng(noise_seed)
+                write_x264(ffmpeg, path, [tone(f, nrng, p) for f in decoded], p["crf"])
+                p["measured_hf_ratio"] = round(hf_ratio(decoded, read_frames(path)[0]), 3)
+            p["calib_attempts"] = len(tried)
+            p["calib_ok"] = abs(p["measured_hf_ratio"] - p["target_hf_ratio"]) <= HF_TOL
             records.append({"file": path.name, "window": w, "variant": f"DIG{k}", "label": "recapture_synthetic",
                             "src_frames": [ids[0], ids[-1]], "params": p})
     out = []
