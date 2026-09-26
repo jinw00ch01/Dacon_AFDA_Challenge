@@ -1,5 +1,7 @@
+import contextlib
 import csv
 import importlib.util
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -75,6 +77,15 @@ class S2HumanReviewTests(unittest.TestCase):
         self.assertEqual(review.apply(sheet, self.human, backup_dir=self.base / "bk"), 0)
         rows = self.rows()
         self.assertEqual((rows["00082"]["review_status"], rows["00282"]["review_status"]), ("unreviewed", "reviewed"))
+
+    def test_korean_notes_print_on_a_cp1252_stdout(self):
+        # GitHub's English Windows runner pipes stdout as cp1252; printing the Korean note used to raise there.
+        sheet = self.write_sheet([{"video_id": "00282", "actual_contact": "uncertain", "human_notes": "접촉 확인"}])
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(review.apply(sheet, self.human, dry_run=True, backup_dir=self.base / "bk"), 0)
+        stdout.flush()
+        self.assertIn("접촉 확인", stdout.detach().getvalue().decode("utf-8"))
 
 
 if __name__ == "__main__":

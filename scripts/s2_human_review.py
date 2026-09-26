@@ -138,6 +138,8 @@ def validate(row, meta):
 
 
 def apply(sheet_path=SHEET, human=HUMAN, dry_run=False, backup_dir=WORK / "backup", today=None):
+    if hasattr(sys.stdout, "reconfigure"):  # Korean notes must not crash a cp1252 stdout (English Windows, CI)
+        sys.stdout.reconfigure(encoding="utf-8")
     human = Path(human)
     with human.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
