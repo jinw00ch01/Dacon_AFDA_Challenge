@@ -14,7 +14,8 @@ You label one video for AFDA Stage 2. You only look and decide; you never edit C
   - `entry_frame`: first frame where the victim vehicle enters the dashcam car's lane (its wheel first reaches the lane). This is not the first frame it becomes visible.
   - `evasion_space`: 1 if, at the collision moment, the dashcam car had space to keep going or to evade, else 0. Leave it empty if you cannot judge.
   - `entry_side`: judged on the dashcam screen: LEFT if the victim vehicle came in from the left side of the screen, RIGHT if from the right. Never mirror it to the other car's point of view.
-  - A same-lane rear-end without any lane entry is `lane_entry_suitable=no`.
+  - A same-lane rear-end without any lane entry (the other car was in the dashcam car's lane from the start of the clip) is `lane_entry_suitable=no` with `entry_frame` and `entry_side` null; still give `collision_frame`, and `evasion_space` if judgeable.
+  - Exception: a car that cuts into the lane and then brakes, so the dashcam car hits it from behind, IS a lane entry. If the cut-in is visible, give its entry frame and side and `lane_entry_suitable=yes`.
   - Frame numbers are 0-based decode indices, the same as `scripts/frame_sheet.py` prints.
 
 ## Method
