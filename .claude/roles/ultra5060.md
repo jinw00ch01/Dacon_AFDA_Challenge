@@ -34,7 +34,7 @@ A 단계(v001)를 늦추지 않는다. GPU가 S2·S1을 학습하는 동안 CPU�
 - 공통: `src/afda/`에 디코딩·전처리를 학습과 추론이 함께 쓰는 모듈로 만든다(CODE_REVIEW.md의 학습/추론 불일치 지적 참고). 노트북 원본 `src/baseline_inference.py`는 수정하지 않는다.
 - S3(가중치 0.4): comma2k19 영상과 센서 proxy가 있다. 저해상도 광학 흐름·프레임 차분 같은 ego-motion 특징과 작은 시계열 모델이 빠르고 데이터 효율적이다. 클래스 규칙(STOPPED, 가감속 deadband, 조향 threshold)은 train split에서만 정하고, Pro의 제안을 반영한다.
 - S2(가중치 0.4): Pro의 에이전트/사람 라벨(headwise mask)로 학습한다. 라벨이 적으면 사전학습 백본 특징 + 작은 시간 헤드, 또는 움직임 급변 기반 휴리스틱을 validation에서 비교한다. 채점은 프레임을 초로 바꿔 비교하므로 시간 오차를 줄이는 것이 핵심이다.
-- S1(가중치 0.2): comma 원본 vs Pro 합성 재촬영(+ S23 실촬영). 원본과 재촬영에 같은 resize·인코딩을 적용해 코덱·해상도 지름길을 막는다.
+- S1(가중치 0.2): **CLAUDE.md 결정 9를 따른다.** v1(광학)과 v1c(디지털)를 섞어 학습하고, 코덱이 같은 쌍으로 코덱 지름길을 막는다. 채택 기준은 다음 세 가지다. Baseline 공식 예제 10개에서 8개 이상 정답(통과 조건), 합성 검증 v1·v1c 중 낮은 값, S23 실촬영(생기면 최우선). 224 전체 축소 대신 원해상도 패치 입력을 후보로 검토한다. Pro에게 코덱 동일 쌍 생성을 요청할 수 있다.
 - 사전학습 가중치: 확보된 DINOv2 ViT-S/14(Apache-2.0)나 torchvision ImageNet 가중치를 학습 때만 받고, 제출물에는 state_dict로 포함한다. 새 가중치는 docs/RESOURCE_LICENSES.md와 docs/MODEL_REGISTRY.json에 기록한다.
 - `harness package`의 `MODELS` 목록과 `validate_zip`은 베이스라인 파일 이름에 고정돼 있다. 모델 파일이 바뀌면 이 목록·검사기·tests를 함께 고친다.
 - 60분 제한: 평가 입력 규모는 비공개다. Baseline 예제의 영상당 시간을 재고 여유 있게 설계한다(디코딩 해상도·프레임 간격 축소, AMP, 배치).
