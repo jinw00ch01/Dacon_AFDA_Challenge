@@ -17,6 +17,7 @@ description: Run one autonomous AFDA work cycle for this PC's role (ultra5060 or
 
 1. `quarantined_packet`: 원인을 STATUS에 기록한다. 상대에게 `request` 패킷으로 재발행을 요청한다. 격리된 내용은 사용하지 않는다.
 2. `packet`: `path` 폴더의 `<kind>.json`과 `files/`를 읽는다. 역할 파일의 kind별 처리를 따른다. 수신 폴더는 읽기 전용이다.
+   - 먼저 context의 `recent_sent_packets`를 본다. `recent_cycles`에 `interrupted_by_loop_restart`가 있으면, 끊긴 사이클이 이 패킷에 대한 답을 이미 보냈을 수 있다. 이미 보낸 답이 있으면 다시 보내지 않는다. 내용을 고쳐야 할 때만 새 패킷에 `supersedes: {"packet_id": <이전 id>, "manifest_sha256": <이전 sha>}`를 넣어 정정본으로 보낸다.
 3. `job_finished`: `python -m agent_bridge job show <id>`와 `run_dir`의 `run.json`, `stdout.log`, `stderr.log`를 확인한다. 실패하면 원인을 고치고 새 job으로 다시 실행한다. 같은 원인으로 3회 실패하면 중지하고 blocked로 기록한다.
 4. `input_changed`: 사람이나 상대가 바꾼 파일을 반영한다.
 5. `scheduled` / `heartbeat`: 역할 파일의 우선순위 작업을 이어서 한다.

@@ -247,6 +247,15 @@ class AgentBridgeTests(unittest.TestCase):
             self.assertEqual(cli.main(["--config", str(config), "pause"]), 2)
         self.assertFalse((Path(self.pro["state_root"]) / "agent" / "PAUSE").exists())
 
+    def test_context_lists_recently_sent_packets(self):
+        policy = load_policy("pro360")
+        packet_id, manifest = packets.publish(self.pro, "qa", {"subject": "stage2 labels v1"})
+        with ledger(self.pro) as book:
+            context = runner._context(self.pro, policy, book, [], "c9")
+        sent = context["recent_sent_packets"]
+        self.assertEqual([(s["packet_id"], s["kind"], s["subject"], s["manifest_sha256"], s["acked"]) for s in sent],
+                         [(packet_id, "qa", "stage2 labels v1", manifest, False)])
+
     def test_code_reload_keeps_modules_usable(self):
         runner._reload_modules()  # _reload_code() would run this test file again before reloading
         self.assertIsNone(runner.usage_limit_until("all good"))

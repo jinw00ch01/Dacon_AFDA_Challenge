@@ -217,6 +217,12 @@ def _context(cfg, policy, book, reasons, cycle_id):
         "wake_reasons": reasons, "recent_cycles": recent,
         "jobs": jobs.summary(cfg, 8),
         "unacked_sent_packets": [pid for pid, s in book["sent"].items() if pid not in book["acks"]][-10:],
+        # A cycle cut off by sleep or reboot leaves its wake reasons unhandled, so the next cycle sees the
+        # same packets again. Showing what was already sent lets it resend only a correction (supersedes).
+        "recent_sent_packets": [{"packet_id": pid, "kind": s["kind"], "subject": s.get("subject"),
+                                 "experiment_id": s.get("experiment_id"), "created_utc": s.get("created_utc"),
+                                 "manifest_sha256": s.get("manifest_sha256"), "acked": pid in book["acks"]}
+                                for pid, s in list(book["sent"].items())[-12:]],
         "budget_today": book["budget"].get(now.strftime("%Y-%m-%d")),
         "exchange_config": str(Path(cfg["project_root"]) / "configs/local-exchange.json"),
     }
