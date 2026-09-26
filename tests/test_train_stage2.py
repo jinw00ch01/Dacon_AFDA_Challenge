@@ -211,5 +211,62 @@ class ConstBaselineTest(unittest.TestCase):
         self.assertAlmostEqual(b["time_mae_s"], 0.0)
 
 
+class ResampleHzTest(unittest.TestCase):
+    def test_resample_length_and_index_map(self):
+        # 120 frames @ 30fps -> 40 frames @ 10Hz (indices 0,3,6,...,117)
+        feats = np.arange(120, dtype=np.float32)[:, None]
+        out = TR.resample_to_hz(feats, fps=30.0, hz=10)
+        self.assertEqual(out.shape[0], 40)
+        self.assertEqual(int(out[0, 0]), 0)
+        self.assertEqual(int(out[1, 0]), 3)   # round(1*30/10)
+        self.assertEqual(int(out[-1, 0]), 117)  # round(39*30/10)
+
+    def test_resample_noop_when_hz_falsy(self):
+        feats = np.zeros((50, 1), np.float32)
+        self.assertIs(TR.resample_to_hz(feats, 30.0, None), feats)
+
+    def test_remap_pos_to_hz(self):
+        # collision at frame 597 @30fps -> round(597*10/30)=199 @10Hz
+        self.assertEqual(TR.remap_pos_to_hz(597, 30.0, 10, new_len=402), 199)
+        self.assertIsNone(TR.remap_pos_to_hz(None, 30.0, 10, 402))
+        # clipped into range
+        self.assertEqual(TR.remap_pos_to_hz(10_000, 30.0, 10, new_len=402), 401)
+
+    def test_apply_resample_updates_fps_and_targets(self):
+        items = [{"feats": np.arange(120, dtype=np.float32)[:, None], "fps": 30.0,
+                  "collision": 60, "entry": None, "evasion": None, "side": None}]
+        TR.apply_resample(items, 10)
+        self.assertEqual(items[0]["fps"], 10.0)
+        self.assertEqual(items[0]["feats"].shape[0], 40)
+        self.assertEqual(items[0]["collision"], 20)  # round(60*10/30)
+        self.assertIsNone(items[0]["entry"])
+
+
+class EvaluateWindowsTest(unittest.TestCase):
+    def _model(self):
+        torch.manual_seed(0)
+        return TR.Stage2Temporal()
+
+    def test_windowed_eval_reports_seconds_and_center(self):
+        # single val video, 40 frames @10Hz, collision at 20; window 50 > len -> full clip
+        val = [{"feats": np.random.RandomState(0).randn(40, 512).astype(np.float32),
+                "fps": 10.0, "collision": 20, "entry": None, "evasion": None, "side": None}]
+        m = self._model()
+        out = TR.evaluate_windows(m, val, window=50, n_windows=3, seed=123,
+                                  device=torch.device("cpu"), amp=False)
+        self.assertEqual(out["n_collision"], 3)  # 3 windows, collision present in each
+        self.assertIsNotNone(out["collision_mae_s"])
+        # center baseline: window<=len -> center=min(25,39)=25, |25-20|/10 = 0.5
+        self.assertAlmostEqual(out["collision_center_mae_s"], 0.5, places=6)
+
+    def test_window_contains_collision_and_remaps(self):
+        # long clip: 400 frames, collision at 199, window 50 -> each window includes 199
+        rng = np.random.RandomState(1)
+        starts = TR._window_starts(400, anchor=199, window=50, n=20, rng=rng)
+        for s in starts:
+            self.assertTrue(s <= 199 < s + 50)
+            self.assertTrue(0 <= s <= 350)
+
+
 if __name__ == "__main__":
     unittest.main()

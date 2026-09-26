@@ -58,6 +58,15 @@ DEFAULTS = {
     # (e001 behaviour). Eval always uses the full sequence, so the val metric stays
     # comparable across e001/e002.
     "train_crop_frames": None,
+    # e003 single change: match the official S2 format. resample_hz resamples the
+    # cached 30fps features onto a 10Hz grid; window_frames crops a 50-frame window
+    # (via train_crop_frames) so train/eval length matches the official 5s/50-frame
+    # clips. When resample_hz is set, checkpoint selection uses windowed eval
+    # (evaluate_windows) at that hz. None => e001/e002 full-clip path unchanged.
+    "resample_hz": None,
+    "window_frames": None,
+    "n_eval_windows": 5,
+    "eval_seed": 12345,
 }
 
 
@@ -135,6 +144,123 @@ def random_time_crop(feats, collision, entry, crop_frames, rng):
         return q if 0 <= q < length else None
 
     return feats[start:end], _remap(collision), _remap(entry)
+
+
+def resample_to_hz(feats, fps, hz):
+    """Resample a (T,512) per-frame feature seq (at ``fps``) onto a ``hz`` grid.
+
+    e003 single change: the official S2 format is 10fps/50-frame, but the cache is
+    30fps. We pick source frames at time k/hz (source index = round(k*fps/hz)) so
+    the model trains and is evaluated on the same time resolution the submission
+    feeds it. Returns the resampled (K,512) array; no re-extraction needed.
+    """
+    t = feats.shape[0]
+    if not hz or hz <= 0 or fps <= 0:
+        return feats
+    k = int(np.floor((t - 1) * hz / float(fps))) + 1
+    idx = np.clip(np.round(np.arange(k) * float(fps) / hz).astype(int), 0, t - 1)
+    return feats[idx]
+
+
+def remap_pos_to_hz(pos, fps, hz, new_len):
+    """Map a frame index at ``fps`` onto the ``hz`` grid, clipped to [0,new_len-1]."""
+    if pos is None or not hz or hz <= 0 or fps <= 0:
+        return pos
+    q = int(round(pos * hz / float(fps)))
+    return int(np.clip(q, 0, new_len - 1))
+
+
+def apply_resample(items, hz):
+    """In-place resample of every item's feats + collision/entry to the hz grid.
+
+    Sets it['fps'] = hz afterwards so downstream MAE (frame/fps) is in seconds on
+    the resampled grid. No-op when hz is falsy (e001/e002 path unchanged).
+    """
+    if not hz:
+        return items
+    for it in items:
+        old_fps = it["fps"]
+        it["feats"] = resample_to_hz(it["feats"], old_fps, hz)
+        nl = it["feats"].shape[0]
+        it["collision"] = remap_pos_to_hz(it["collision"], old_fps, hz, nl)
+        it["entry"] = remap_pos_to_hz(it["entry"], old_fps, hz, nl)
+        it["fps"] = float(hz)
+    return items
+
+
+def _window_starts(t_len, anchor, window, n, rng):
+    """n random start indices for a length-``window`` crop, each containing anchor."""
+    starts = []
+    for _ in range(n):
+        if t_len <= window:
+            starts.append(0)
+        elif anchor is not None:
+            lo = max(0, anchor - window + 1)
+            hi = min(anchor, t_len - window)
+            starts.append(int(rng.randint(lo, hi + 1)) if hi >= lo
+                          else max(0, min(anchor, t_len - window)))
+        else:
+            starts.append(int(rng.randint(0, t_len - window + 1)))
+    return starts
+
+
+@torch.inference_mode()
+def evaluate_windows(model, items, window, n_windows, seed, device, amp):
+    """Mode-(a) eval: n fixed-seed ``window``-frame crops per video (each containing
+    the labelled target when present). Reports collision/entry/time MAE in seconds
+    plus the same-window centre-prediction MAE (position-free reference to beat)."""
+    model.eval()
+    rng = np.random.RandomState(seed)
+    c_err, e_err, c_cen, e_cen = [], [], [], []
+    ev_t, ev_p, sd_t, sd_p = [], [], [], []
+    for it in items:
+        feats_full = it["feats"]
+        t_len, fps = feats_full.shape[0], it["fps"]
+        anchor = it["collision"] if it["collision"] is not None else it["entry"]
+        for start in _window_starts(t_len, anchor, window, n_windows, rng):
+            end = min(start + window, t_len)
+            w = feats_full[start:end]
+            wlen = end - start
+            center = min(window // 2, wlen - 1)
+
+            def _rm(p):
+                if p is None:
+                    return None
+                q = p - start
+                return q if 0 <= q < wlen else None
+
+            c_t, e_t = _rm(it["collision"]), _rm(it["entry"])
+            x = torch.from_numpy(w).unsqueeze(0).to(device)
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
+                h, cl, el = _logits(model, x)
+            c_pred, e_pred = int(cl.argmax(1)), int(el.argmax(1))
+            if c_t is not None:
+                c_err.append(abs(c_pred - c_t) / fps)
+                c_cen.append(abs(center - c_t) / fps)
+            if e_t is not None:
+                e_err.append(abs(e_pred - e_t) / fps)
+                e_cen.append(abs(center - e_t) / fps)
+            scene = _scene(model, h.float(), c_pred, e_pred)
+            if it["evasion"] is not None and c_t is not None:
+                ev_t.append(it["evasion"]); ev_p.append(int(scene[:, :2].argmax(1)))
+            if it["side"] is not None and (c_t is not None or e_t is not None):
+                sd_t.append(it["side"]); sd_p.append(int(scene[:, 2:].argmax(1)))
+    mae = lambda xs: (float(np.mean(xs)) if xs else None)
+    acc = lambda t, p: (float(np.mean(np.asarray(t) == np.asarray(p))) if t else None)
+    c_mae, e_mae = mae(c_err), mae(e_err)
+    finite = [m for m in (c_mae, e_mae) if m is not None]
+    cen_finite = [m for m in (mae(c_cen), mae(e_cen)) if m is not None]
+    return {
+        "n": len(items), "n_windows": n_windows,
+        "collision_mae_s": c_mae, "n_collision": len(c_err),
+        "entry_mae_s": e_mae, "n_entry": len(e_err),
+        "evasion_acc": acc(ev_t, ev_p), "n_evasion": len(ev_t),
+        "side_acc": acc(sd_t, sd_p), "n_side": len(sd_t),
+        "time_mae_s": (float(np.mean(finite)) if finite else None),
+        "center_time_mae_s": (float(np.mean(cen_finite)) if cen_finite else None),
+        "collision_center_mae_s": mae(c_cen),
+        "entry_center_mae_s": mae(e_cen),
+    }
 
 
 def const_baseline(train_items, val_items):
@@ -238,6 +364,12 @@ def main() -> int:
     cache_dir = ROOT / cfg["cache_dir"]
     train_all = load_cache(cache_dir, "train", cfg["max_videos"])
     val_items = load_cache(cache_dir, "validation", cfg["max_videos"])
+    hz = cfg.get("resample_hz")
+    if hz:
+        apply_resample(train_all, hz)
+        apply_resample(val_items, hz)
+        print(f"resampled features to {hz}Hz; window_frames={cfg.get('window_frames')} "
+              f"train_crop_frames={cfg.get('train_crop_frames')}", flush=True)
     # only videos with at least one valid target drive gradients
     train = [it for it in train_all if any(it[k] is not None for k in ("collision", "entry", "evasion", "side"))]
     if not train:
@@ -290,7 +422,14 @@ def main() -> int:
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
             running += float(loss.detach())
-        metrics = evaluate(model, val_items, device, amp) if val_items else {}
+        if not val_items:
+            metrics = {}
+        elif hz:
+            metrics = evaluate_windows(
+                model, val_items, int(cfg["window_frames"] or cfg["train_crop_frames"] or 50),
+                int(cfg["n_eval_windows"]), int(cfg["eval_seed"]), device, amp)
+        else:
+            metrics = evaluate(model, val_items, device, amp)
         metrics["epoch"] = epoch
         metrics["train_loss"] = running / max(1, len(train))
         metrics["seconds"] = round(time.time() - start, 1)

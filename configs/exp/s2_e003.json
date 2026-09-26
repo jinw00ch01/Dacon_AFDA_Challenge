@@ -1,0 +1,18 @@
+{
+  "_note": "S2 e003 = ONE change vs e001/e002: match the OFFICIAL S2 input format. The official Baseline/data/stage2 examples are 10fps / 50 frames (5s), collision at frame 30-41; but the cache and e001/e002 used 30fps / ~1200-frame Nexar clips. Pro review f62cad3f showed e001's real official-format collision MAE is 1.06s (e002 1.18s), neither beating the frame-25 constant (0.78s) -- because the model never saw the official format. e003 resamples the SAME cached features to 10Hz (resample_hz=10, no re-extraction) and trains on random 50-frame windows (train_crop_frames=50) that contain the collision, remapping targets to window-relative indices. Checkpoint selection uses windowed eval (evaluate_windows): 5 fixed-seed 50-frame val windows, collision/time MAE in seconds vs the same-window center-prediction MAE. Falsification (Pro proposal): if val collision_mae_s does not beat center_time_mae_s, OR official-5 collision MAE (scripts/eval_stage2_official.py) does not beat 0.78s, ResNet18+BiGRU cannot learn collision timing in this format -> v002 S2 uses a Nexar-train constant-fraction predictor. Separate out-dir preserves the confirmed v001 models/stage2 (e001). Labels are agent_labels_v6 proxy (NOT official GT).",
+  "experiment_id": "s2-e003",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v1",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2_e003",
+  "resample_hz": 10,
+  "window_frames": 50,
+  "train_crop_frames": 50,
+  "n_eval_windows": 5,
+  "eval_seed": 12345
+}
