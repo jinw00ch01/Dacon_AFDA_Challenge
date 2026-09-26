@@ -234,8 +234,12 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
         derived = stage3_labels.derive_accel_column(speed_df, "speed_pred", rule)
         a_pred = [ACCEL.index(x) for x in derived]
 
+    a_pred_raw = None
     if predict_stopped:
-        # binary STOPPED head overrides the derived/argmax accel class where it fires
+        # binary STOPPED head overrides the derived/argmax accel class where it fires.
+        # Keep the pre-override class so the gate (Pro request 918be48a) can re-score at
+        # other thresholds when the base is argmax (speed base can re-derive from speed_pred).
+        a_pred_raw = list(a_pred)
         a_pred = [STOPPED_IDX if p >= stopped_threshold else a for p, a in zip(stopped_prob, a_pred)]
 
     accel_f1 = macro_f1(a_true, a_pred, len(ACCEL))
@@ -276,6 +280,7 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
             cols["speed_pred"] = speed_pred
         if predict_stopped:
             cols["stopped_prob"] = stopped_prob
+            cols["accel_pred_raw"] = [ACCEL[i] for i in a_pred_raw]
         records = pd.DataFrame(cols)
     return metrics, records
 

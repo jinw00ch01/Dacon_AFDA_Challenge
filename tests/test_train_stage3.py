@@ -198,6 +198,10 @@ class TrainStage3DataTest(unittest.TestCase):
         )
         self.assertIn("stopped_prob", records.columns)
         self.assertEqual(set(records["accel_pred"]), {"STOPPED"})
+        # accel_pred_raw carries the pre-override class (Pro gate request 918be48a):
+        # speed 20 -> derive is never STOPPED, so raw != override.
+        self.assertIn("accel_pred_raw", records.columns)
+        self.assertNotIn("STOPPED", set(records["accel_pred_raw"]))
 
     def test_evaluate_stopped_head_below_threshold_keeps_accel(self):
         # A STOPPED head that never fires (prob < threshold) leaves the derived class.
