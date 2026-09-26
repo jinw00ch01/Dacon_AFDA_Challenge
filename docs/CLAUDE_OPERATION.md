@@ -78,6 +78,20 @@ powershell -File scripts\setup_claude_agents.ps1 -Role <role> -Uninstall   # 루
 - 루프는 사이클 사이에 `agent_bridge/*.py` 변경을 감지하면 모듈을 다시 읽는다. 코드 갱신 때문에 재시작할 필요가 없다.
 - 재시작이 꼭 필요하면(루프 본문 변경 등) `pause` → 진행 중인 사이클과 job이 끝나기를 기다림 → 작업 스케줄러에서 `AFDA-Agent-<role>` 중지·시작 → `resume` 순서로 한다. job과 사이클은 스케줄러 작업과 같은 job 객체에 있어, 바로 중지하면 함께 종료된다.
 
+## 자동 복구 (2026-09-26 추가)
+
+9/26 19:57~19:58에 두 PC의 교환 감시 프로세스가 종료 코드 0xC000013A로 꺼졌다. 작업 스케줄러는 이 종료를 실패로 보지 않아 다시 켜지 않았고, 파일 교환이 약 3시간 멈췄다. 그래서 두 서비스가 서로를 살핀다.
+
+| 감시하는 쪽 | 멈춤 판단 | 조치 |
+|---|---|---|
+| 에이전트 루프 → 교환 서비스 | `start_exchange.ps1` 프로세스가 없고, 교환 worker 상태(`%LOCALAPPDATA%\AFDA\<role>\worker-state.json`)가 2분 넘게 갱신되지 않음. 1분마다 확인 | `schtasks /Run /TN AFDA-Exchange-<role>`, 작업이 없으면 `start_exchange.ps1`을 직접 실행. 10분에 한 번까지. 1시간 안에 3번째이거나 실패하면 사람에게 알림 |
+| 교환 서비스 → 에이전트 루프 | 루프 장부(`...\agent\ledger.json`, 일시중지 중에도 20초마다 기록)가 10분 넘게 갱신되지 않음. 10분마다 확인 | `schtasks /Run /TN AFDA-Agent-<role>` |
+
+- 사람이 일부러 멈춘 경우는 건드리지 않는다. 교환은 `stop_exchange.ps1`이 만드는 `<state_root>\STOP`, 루프는 `agent_bridge stop`이 만드는 `<state_root>\agent\STOP`으로 판단한다. 작업 스케줄러에서 작업을 "끝내기"만 하면 멈춤으로 보고 다시 켠다. 오래 멈추려면 위 명령을 쓴다.
+- 새 감시 프로세스는 남아 있는 Syncthing을 이어받아 중복 실행하지 않는다.
+- 기록: 루프 쪽 조치는 `...\agent\loop.log`, 교환 쪽 조치는 `%LOCALAPPDATA%\AFDA\<role>\exchange_watchdog.log`에 남는다.
+- Pro 시험(9/26 23:09): 교환 감시 프로세스를 끄자 2분 만에 루프가 다시 켰고, 새 감시 프로세스가 남아 있던 Syncthing을 이어받았다.
+
 ## 사람이 하는 일
 
 1. Ultra에서 위 설정 명령을 1회 실행한다.
