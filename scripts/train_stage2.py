@@ -42,6 +42,7 @@ from torch import nn
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from afda.models import Stage2Temporal  # noqa: E402
+from afda import metrics  # noqa: E402
 
 DEFAULTS = {
     "cache_dir": "data/derived/s2_feat_cache_v1",
@@ -67,6 +68,19 @@ DEFAULTS = {
     "window_frames": None,
     "n_eval_windows": 5,
     "eval_seed": 12345,
+    # e004 single change: match the OFFICIAL S2 window LAYOUT (collision at window
+    # position 30-41, 60-82%) and select on the official S2 score. All three flags
+    # default off so e001/e002/e003 behaviour is byte-unchanged when absent.
+    # window_bias=[lo,hi] biases window placement so the collision anchor lands at a
+    # uniform position in [lo,hi] inside the window (else uniform-anywhere as before).
+    "window_bias": None,
+    # use_position_prior adds a per-position log-prior (from the biased train
+    # window-position histogram) to the collision/entry logits before argmax/CE, so
+    # the model learns only the residual over the known official layout.
+    "use_position_prior": False,
+    # select_metric: "time_mae_s" (min, current behaviour) or "official_s2" (max the
+    # official S2 hit-rate score) for checkpoint selection.
+    "select_metric": "time_mae_s",
 }
 
 
@@ -114,14 +128,45 @@ def class_weights(labels, n_classes):
     return torch.tensor(w, dtype=torch.float32)
 
 
-def random_time_crop(feats, collision, entry, crop_frames, rng):
+def biased_window_start(t_len, anchor, window, bias, rng):
+    """Start index of a length-``window`` crop so the anchor lands at a biased position.
+
+    e004: the OFFICIAL S2 examples place the collision at window position 30-41. With
+    ``bias=[lo,hi]`` we pick a target window-relative position uniformly in [lo,hi] and
+    set start = anchor - pos, clamped so the window stays within [0, t_len]. When the
+    clamp is active the realised position may fall outside [lo,hi] (boundary videos).
+    Falls back to the existing uniform placement when anchor is None, t_len<=window,
+    or bias is falsy.
+    """
+    length = int(window)
+    if t_len <= length:
+        return 0
+    if not bias or anchor is None:
+        if anchor is None:
+            return int(rng.randint(0, t_len - length + 1))
+        lo = max(0, anchor - length + 1)
+        hi = min(anchor, t_len - length)
+        return int(rng.randint(lo, hi + 1)) if hi >= lo else max(0, min(anchor, t_len - length))
+    b_lo, b_hi = int(bias[0]), int(bias[1])
+    if b_hi < b_lo:
+        b_lo, b_hi = b_hi, b_lo
+    b_lo = max(0, min(b_lo, length - 1))
+    b_hi = max(0, min(b_hi, length - 1))
+    pos = int(rng.randint(b_lo, b_hi + 1))
+    start = anchor - pos
+    return int(max(0, min(start, t_len - length)))
+
+
+def random_time_crop(feats, collision, entry, crop_frames, rng, bias=None):
     """Crop a random window of length ``crop_frames`` from a (T,512) feature seq.
 
     Removes the absolute-position shortcut: the window is placed so that a randomly
     chosen present target (collision/entry) stays inside it, and each target is
     remapped to the window-relative index (or dropped to None if it falls outside).
     Returns (cropped_feats, new_collision, new_entry). No-op when crop_frames is
-    None/<=0 or T <= crop_frames, so e001 runs are unchanged.
+    None/<=0 or T <= crop_frames, so e001 runs are unchanged. When ``bias`` is set
+    (e004), the anchor is placed at a biased window position (biased_window_start);
+    ``bias=None`` reproduces the e001/e002/e003 uniform placement byte-for-byte.
     """
     t = feats.shape[0]
     if not crop_frames or crop_frames <= 0 or t <= crop_frames:
@@ -130,9 +175,12 @@ def random_time_crop(feats, collision, entry, crop_frames, rng):
     anchors = [p for p in (collision, entry) if p is not None]
     if anchors:
         anchor = anchors[int(rng.randint(len(anchors)))]
-        lo = max(0, anchor - length + 1)
-        hi = min(anchor, t - length)  # keep anchor inside [start, start+length)
-        start = int(rng.randint(lo, hi + 1)) if hi >= lo else max(0, min(anchor, t - length))
+        if bias:
+            start = biased_window_start(t, anchor, length, bias, rng)
+        else:
+            lo = max(0, anchor - length + 1)
+            hi = min(anchor, t - length)  # keep anchor inside [start, start+length)
+            start = int(rng.randint(lo, hi + 1)) if hi >= lo else max(0, min(anchor, t - length))
     else:
         start = int(rng.randint(0, t - length + 1))
     end = start + length
@@ -188,11 +236,18 @@ def apply_resample(items, hz):
     return items
 
 
-def _window_starts(t_len, anchor, window, n, rng):
-    """n random start indices for a length-``window`` crop, each containing anchor."""
+def _window_starts(t_len, anchor, window, n, rng, bias=None):
+    """n random start indices for a length-``window`` crop, each containing anchor.
+
+    When ``bias`` (e004) is set the anchor is placed at a biased window position
+    (biased_window_start); ``bias=None`` reproduces the prior uniform placement
+    byte-for-byte so e003 eval windows are unchanged.
+    """
     starts = []
     for _ in range(n):
-        if t_len <= window:
+        if bias:
+            starts.append(biased_window_start(t_len, anchor, window, bias, rng))
+        elif t_len <= window:
             starts.append(0)
         elif anchor is not None:
             lo = max(0, anchor - window + 1)
@@ -204,8 +259,44 @@ def _window_starts(t_len, anchor, window, n, rng):
     return starts
 
 
+def position_log_prior(train_items, window, key, bias=None, seed=0, n_samples=8, eps=1e-3):
+    """Length-``window`` log-prior over the biased train window-position of ``key``.
+
+    e004: builds the empirical histogram of the (anchor==key) window-relative position
+    over ``n_samples`` biased-window draws per train item (deterministic, fixed seed),
+    normalises to a probability vector, and returns ``log(prob + eps)`` as float32.
+    Positions are sampled in the SAME biased coordinate frame the model trains on, so
+    the prior matches the layout the logits see. Items without ``key`` are skipped.
+    When no item carries the key the prior is uniform (log(1/window + eps)).
+    """
+    length = int(window)
+    counts = np.zeros(length, dtype=np.float64)
+    rng = np.random.RandomState(seed)
+    for it in train_items:
+        anchor_key = it.get(key)
+        if anchor_key is None:
+            continue
+        # place the window on whatever anchor training uses (a present target); then
+        # record where `key` falls inside it. Mirror random_time_crop's anchor choice.
+        crop_anchors = [it.get("collision"), it.get("entry")]
+        crop_anchors = [p for p in crop_anchors if p is not None]
+        if not crop_anchors:
+            continue
+        t_len = it["feats"].shape[0]
+        for _ in range(int(n_samples)):
+            anchor = crop_anchors[int(rng.randint(len(crop_anchors)))]
+            start = biased_window_start(t_len, anchor, length, bias, rng)
+            pos = anchor_key - start
+            if 0 <= pos < length:
+                counts[pos] += 1.0
+    total = counts.sum()
+    prob = (counts / total) if total > 0 else np.full(length, 1.0 / length, dtype=np.float64)
+    return np.log(prob + eps).astype(np.float32)
+
+
 @torch.inference_mode()
-def evaluate_windows(model, items, window, n_windows, seed, device, amp):
+def evaluate_windows(model, items, window, n_windows, seed, device, amp,
+                     bias=None, prior_collision=None, prior_entry=None):
     """Mode-(a) eval: n fixed-seed ``window``-frame crops per video (each containing
     the labelled target when present). Reports collision/entry/time MAE in seconds
     plus the same-window centre-prediction MAE (position-free reference to beat)."""
@@ -213,11 +304,18 @@ def evaluate_windows(model, items, window, n_windows, seed, device, amp):
     rng = np.random.RandomState(seed)
     c_err, e_err, c_cen, e_cen = [], [], [], []
     ev_t, ev_p, sd_t, sd_p = [], [], [], []
+    # e004 official-S2 collection: per-window predicted/GT collision & entry frame
+    # indices (window-relative, at ``hz``==fps) and evasion/side true/pred labels.
+    of_c_pred, of_c_gt, of_e_pred, of_e_gt = [], [], [], []
+    of_ev_t, of_ev_p, of_sd_t, of_sd_p = [], [], [], []
+    # const predictor (collision=30, entry=22) on the IDENTICAL windows.
+    cst_c_pred, cst_e_pred = [], []
+    const_c, const_e = 30, 22
     for it in items:
         feats_full = it["feats"]
         t_len, fps = feats_full.shape[0], it["fps"]
         anchor = it["collision"] if it["collision"] is not None else it["entry"]
-        for start in _window_starts(t_len, anchor, window, n_windows, rng):
+        for start in _window_starts(t_len, anchor, window, n_windows, rng, bias):
             end = min(start + window, t_len)
             w = feats_full[start:end]
             wlen = end - start
@@ -233,23 +331,60 @@ def evaluate_windows(model, items, window, n_windows, seed, device, amp):
             x = torch.from_numpy(w).unsqueeze(0).to(device)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                 h, cl, el = _logits(model, x)
+            if prior_collision is not None:
+                pc = torch.as_tensor(prior_collision[:wlen], device=cl.device, dtype=cl.dtype)
+                cl = cl + pc.unsqueeze(0)
+            if prior_entry is not None:
+                pe = torch.as_tensor(prior_entry[:wlen], device=el.device, dtype=el.dtype)
+                el = el + pe.unsqueeze(0)
             c_pred, e_pred = int(cl.argmax(1)), int(el.argmax(1))
             if c_t is not None:
                 c_err.append(abs(c_pred - c_t) / fps)
                 c_cen.append(abs(center - c_t) / fps)
+                of_c_pred.append(c_pred); of_c_gt.append(c_t)
+                cst_c_pred.append(min(const_c, wlen - 1))
             if e_t is not None:
                 e_err.append(abs(e_pred - e_t) / fps)
                 e_cen.append(abs(center - e_t) / fps)
+                of_e_pred.append(e_pred); of_e_gt.append(e_t)
+                cst_e_pred.append(min(const_e, wlen - 1))
             scene = _scene(model, h.float(), c_pred, e_pred)
             if it["evasion"] is not None and c_t is not None:
                 ev_t.append(it["evasion"]); ev_p.append(int(scene[:, :2].argmax(1)))
+                of_ev_t.append(it["evasion"]); of_ev_p.append(int(scene[:, :2].argmax(1)))
             if it["side"] is not None and (c_t is not None or e_t is not None):
                 sd_t.append(it["side"]); sd_p.append(int(scene[:, 2:].argmax(1)))
+                of_sd_t.append(it["side"]); of_sd_p.append(int(scene[:, 2:].argmax(1)))
     mae = lambda xs: (float(np.mean(xs)) if xs else None)
     acc = lambda t, p: (float(np.mean(np.asarray(t) == np.asarray(p))) if t else None)
     c_mae, e_mae = mae(c_err), mae(e_err)
     finite = [m for m in (c_mae, e_mae) if m is not None]
     cen_finite = [m for m in (mae(c_cen), mae(e_cen)) if m is not None]
+
+    # Official S2 components (frame->seconds via ``fps``==hz, tol 0.3s). None when the
+    # component has no labelled videos; stage2_score treats a None component as 0.0.
+    hz = float(items[0]["fps"]) if items else 10.0
+
+    def _acc03(pred_frames, gt_frames):
+        return (metrics.accuracy_within_frames(pred_frames, gt_frames, fps=hz, tol=0.3)
+                if gt_frames else None)
+
+    def _f1(y_t, y_p):
+        return metrics.macro_f1(y_t, y_p, labels=[0, 1]) if y_t else None
+
+    def _s2(ca, ea, df, ef):
+        return metrics.stage2_score(ca or 0.0, ea or 0.0, df or 0.0, ef or 0.0)
+
+    collision_acc03 = _acc03(of_c_pred, of_c_gt)
+    entry_acc03 = _acc03(of_e_pred, of_e_gt)
+    dir_f1 = _f1(of_sd_t, of_sd_p)
+    evasion_f1 = _f1(of_ev_t, of_ev_p)
+    official_s2 = _s2(collision_acc03, entry_acc03, dir_f1, evasion_f1)
+
+    const_collision_acc03 = _acc03(cst_c_pred, of_c_gt)
+    const_entry_acc03 = _acc03(cst_e_pred, of_e_gt)
+    # const scene predictor abstains on direction/evasion (no scene model) -> 0.0.
+    const_official_s2 = _s2(const_collision_acc03, const_entry_acc03, 0.0, 0.0)
     return {
         "n": len(items), "n_windows": n_windows,
         "collision_mae_s": c_mae, "n_collision": len(c_err),
@@ -260,6 +395,15 @@ def evaluate_windows(model, items, window, n_windows, seed, device, amp):
         "center_time_mae_s": (float(np.mean(cen_finite)) if cen_finite else None),
         "collision_center_mae_s": mae(c_cen),
         "entry_center_mae_s": mae(e_cen),
+        # e004 official S2 (checkpoint-selection score + reported components)
+        "official_s2": official_s2,
+        "collision_acc03": collision_acc03,
+        "entry_acc03": entry_acc03,
+        "dir_f1": dir_f1,
+        "evasion_f1": evasion_f1,
+        "const_official_s2": const_official_s2,
+        "const_collision_acc03": const_collision_acc03,
+        "const_entry_acc03": const_entry_acc03,
     }
 
 
@@ -387,7 +531,24 @@ def main() -> int:
     ce = nn.CrossEntropyLoss()
     grad_accum = max(1, int(cfg["grad_accum"]))
 
-    best = {"time_mae_s": float("inf")}
+    # e004 flags (all default off -> e001/e002/e003 path is byte-unchanged).
+    window_bias = cfg.get("window_bias")
+    eval_window = int(cfg.get("window_frames") or cfg.get("train_crop_frames") or 50)
+    prior_collision = prior_entry = None  # numpy log-prior vectors (added to logits)
+    if cfg.get("use_position_prior"):
+        prior_collision = position_log_prior(train, eval_window, "collision",
+                                              bias=window_bias, seed=int(cfg["seed"]))
+        prior_entry = position_log_prior(train, eval_window, "entry",
+                                         bias=window_bias, seed=int(cfg["seed"]) + 1)
+        prior_c_t = torch.from_numpy(prior_collision).to(device)
+        prior_e_t = torch.from_numpy(prior_entry).to(device)
+        print(f"position priors on: window={eval_window} bias={window_bias}", flush=True)
+    else:
+        prior_c_t = prior_e_t = None
+    select_metric = cfg.get("select_metric") or "time_mae_s"
+    use_official = (select_metric == "official_s2")
+
+    best = {"time_mae_s": float("inf"), "official_s2": float("-inf")}
     history = []
     for epoch in range(int(cfg["epochs"])):
         model.train()
@@ -398,10 +559,15 @@ def main() -> int:
         for step, i in enumerate(order):
             it = train[i]
             feats, c_tgt, e_tgt = random_time_crop(
-                it["feats"], it["collision"], it["entry"], cfg["train_crop_frames"], rng)
+                it["feats"], it["collision"], it["entry"], cfg["train_crop_frames"], rng,
+                bias=window_bias)
             x = torch.from_numpy(feats).unsqueeze(0).to(device)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                 h, cl, el = _logits(model, x)
+                if prior_c_t is not None:
+                    wl = cl.shape[1]
+                    cl = cl + prior_c_t[:wl].to(cl.dtype).unsqueeze(0)
+                    el = el + prior_e_t[:wl].to(el.dtype).unsqueeze(0)
                 loss = torch.zeros((), device=device)
                 if c_tgt is not None:
                     loss = loss + ce(cl, torch.tensor([c_tgt], device=device))
@@ -426,8 +592,9 @@ def main() -> int:
             metrics = {}
         elif hz:
             metrics = evaluate_windows(
-                model, val_items, int(cfg["window_frames"] or cfg["train_crop_frames"] or 50),
-                int(cfg["n_eval_windows"]), int(cfg["eval_seed"]), device, amp)
+                model, val_items, eval_window,
+                int(cfg["n_eval_windows"]), int(cfg["eval_seed"]), device, amp,
+                bias=window_bias, prior_collision=prior_collision, prior_entry=prior_entry)
         else:
             metrics = evaluate(model, val_items, device, amp)
         metrics["epoch"] = epoch
@@ -435,8 +602,13 @@ def main() -> int:
         metrics["seconds"] = round(time.time() - start, 1)
         history.append(metrics)
         print(f"epoch {epoch}: {json.dumps(metrics)}", flush=True)
-        score = metrics.get("time_mae_s")
-        if score is not None and score < best["time_mae_s"]:
+        if use_official:
+            score = metrics.get("official_s2")
+            improved = score is not None and score > best.get("official_s2", float("-inf"))
+        else:
+            score = metrics.get("time_mae_s")
+            improved = score is not None and score < best.get("time_mae_s", float("inf"))
+        if improved:
             best = metrics
             torch.save(
                 {
@@ -446,7 +618,8 @@ def main() -> int:
                 },
                 out_dir / "best.pt",
             )
-            print(f"  saved best.pt (time_mae_s={score:.3f})", flush=True)
+            tag = "official_s2" if use_official else "time_mae_s"
+            print(f"  saved best.pt ({tag}={score:.3f})", flush=True)
 
     # Always leave a checkpoint even if validation had no time labels.
     if not (out_dir / "best.pt").exists():
@@ -461,7 +634,10 @@ def main() -> int:
         "config": cfg,
         "train_videos": len(train),
         "val_videos": len(val_items),
-        "best": best if best["time_mae_s"] != float("inf") else None,
+        "best": (best if (best.get("official_s2", float("-inf")) != float("-inf")
+                          if use_official
+                          else best.get("time_mae_s", float("inf")) != float("inf"))
+                 else None),
         "const_baseline": const,
         "history": history,
         "label_source": "agent_labels_v6 (not official GT)",

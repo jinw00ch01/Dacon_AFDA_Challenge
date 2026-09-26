@@ -1,0 +1,21 @@
+{
+  "_note": "S2 e004 = ONE change family vs e003: match the OFFICIAL S2 window LAYOUT, not just its 10Hz/50-frame FORMAT. The official Baseline/data/stage2 examples put the collision at window position 30-41 (60-82%), but e001/e002/e003 placed the collision UNIFORMLY anywhere in the 50-frame window, so a constant predictor at frame 30 scores official Acc@0.3s=0.8 that no trained model beat. e004 (1) biases window placement so the collision anchor lands uniformly in window positions [25,41] (window_bias=[25,41]) for BOTH training crops and fixed-seed eval windows, (2) adds a per-position log-prior from the biased TRAIN window-position histogram to the collision/entry logits so the model learns only the RESIDUAL over the known layout (use_position_prior=true), and (3) selects the checkpoint by the OFFICIAL S2 score (select_metric=official_s2) via src/afda/metrics.py: 0.35*collision Acc@0.3 + 0.35*entry Acc@0.3 + 0.15*dir macro-F1 + 0.15*evasion macro-F1, computed on the same fixed-seed windows. GATE: beat the CONSTANT collision30/entry22 predictor's official_s2 on the SAME windows (reported as const_official_s2) AND official 5-example collision Acc@0.3 >= 0.8 (scripts/eval_stage2_official.py). FALSIFICATION: if it does not beat const_official_s2, v002 S2 freezes at the constant frame-30 collision / frame-22 entry predictor and timing-model training stops. Separate out-dir preserves e001/e003 models. Labels are agent_labels_v6 proxy (NOT official GT).",
+  "experiment_id": "s2-e004",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v1",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2_e004",
+  "resample_hz": 10,
+  "window_frames": 50,
+  "train_crop_frames": 50,
+  "n_eval_windows": 5,
+  "eval_seed": 12345,
+  "window_bias": [25, 41],
+  "use_position_prior": true,
+  "select_metric": "official_s2"
+}
