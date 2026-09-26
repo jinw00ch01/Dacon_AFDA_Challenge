@@ -273,6 +273,72 @@ class AgentBridgeTests(unittest.TestCase):
         self.assertEqual([(s["packet_id"], s["kind"], s["subject"], s["manifest_sha256"], s["acked"]) for s in sent],
                          [(packet_id, "qa", "stage2 labels v1", manifest, False)])
 
+    def _exchange_state(self, idle_seconds):
+        import os
+        import time
+        state = Path(self.pro["state_root"])
+        (state / "syncthing").mkdir(parents=True, exist_ok=True)
+        worker_state = state / "worker-state.json"
+        worker_state.write_text("{}", encoding="utf-8")
+        stamp = time.time() - idle_seconds
+        os.utime(worker_state, (stamp, stamp))
+        return state
+
+    def test_exchange_watchdog_restarts_only_a_dead_unstopped_exchange(self):
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from agent_bridge.state import utc_now
+        state = self._exchange_state(idle_seconds=900)
+        calls = []
+        ok = lambda argv: calls.append(argv) or SimpleNamespace(returncode=0, stdout="", stderr="")  # noqa: E731
+        now, book = utc_now(), {}
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", book, now=now, alive=True, run=ok))
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", book, now=now + timedelta(seconds=30), alive=False, run=ok))
+        got = runner.exchange_watchdog(self.pro, "cfg.json", book, now=now + timedelta(seconds=61), alive=False, run=ok)
+        self.assertEqual(calls, [["schtasks", "/Run", "/TN", "AFDA-Exchange-pro360"]])
+        self.assertIn("started task AFDA-Exchange-pro360", got["message"])
+        self.assertFalse(got["alert"])
+        # At most one restart per 10 minutes, whatever the supervisor check says.
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", book, now=now + timedelta(minutes=5), alive=False, run=ok))
+        self.assertEqual(len(calls), 1)
+        # A worker that ran in the last 2 minutes is starting up, not dead.
+        self._exchange_state(idle_seconds=30)
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", {}, now=now, alive=False, run=ok))
+        # A human STOP always wins; a PC without an exchange install is left alone.
+        self._exchange_state(idle_seconds=900)
+        (state / "STOP").write_text("Requested by user", encoding="utf-8")
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", {}, now=now, alive=False, run=ok))
+        (state / "STOP").unlink()
+        shutil.rmtree(state / "syncthing")
+        self.assertIsNone(runner.exchange_watchdog(self.pro, "cfg.json", {}, now=now, alive=False, run=ok))
+        self.assertEqual(len(calls), 1)
+
+    def test_exchange_watchdog_falls_back_and_alerts(self):
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from agent_bridge.state import utc_now
+        self._exchange_state(idle_seconds=900)
+        fail = lambda argv: SimpleNamespace(returncode=1, stdout="", stderr="ERROR: task not found")  # noqa: E731
+        ok = lambda argv: SimpleNamespace(returncode=0, stdout="", stderr="")  # noqa: E731
+        launched = []
+        now, book = utc_now(), {}
+        got = runner.exchange_watchdog(self.pro, "cfg.json", book, now=now, alive=False, run=fail,
+                                       launch=lambda argv, cwd: launched.append(argv))
+        self.assertIn("launched start_exchange.ps1", got["message"])
+        self.assertEqual((launched[0][-2:], Path(launched[0][-3]).name), (["-Config", "cfg.json"], "start_exchange.ps1"))
+        self.assertFalse(got["alert"])
+        # The third restart within an hour asks a human to look.
+        got = runner.exchange_watchdog(self.pro, "cfg.json", book, now=now + timedelta(minutes=11), alive=False, run=ok)
+        self.assertFalse(got["alert"])
+        got = runner.exchange_watchdog(self.pro, "cfg.json", book, now=now + timedelta(minutes=22), alive=False, run=ok)
+        self.assertTrue(got["alert"])
+
+        def boom(argv, cwd):
+            raise OSError("powershell missing")
+        got = runner.exchange_watchdog(self.pro, "cfg.json", {}, now=now, alive=False, run=fail, launch=boom)
+        self.assertTrue(got["alert"])
+        self.assertIn("restart failed", got["message"])
+
     def test_code_reload_keeps_modules_usable(self):
         runner._reload_modules()  # _reload_code() would run this test file again before reloading
         self.assertIsNone(runner.usage_limit_until("all good"))

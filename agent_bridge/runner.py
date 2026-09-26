@@ -488,6 +488,84 @@ def keep_awake(enable=True):
     ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if enable else 0))
 
 
+EXCHANGE_TASK = "AFDA-Exchange-{role}"
+
+
+def exchange_supervisor_alive():
+    """True if a start_exchange.ps1 supervisor is running for this user, False if not, None if unknown."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    for process in psutil.process_iter(["name", "cmdline"]):
+        name = (process.info.get("name") or "").lower()
+        cmdline = " ".join(process.info.get("cmdline") or [])
+        if name.startswith(("powershell", "pwsh")) and "start_exchange.ps1" in cmdline:
+            return True
+    return False
+
+
+def _run_quiet(argv):
+    return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                          creationflags=0x08000000 if os.name == "nt" else 0)
+
+
+def _launch_detached(argv, cwd):
+    kwargs = dict(cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  start_new_session=os.name != "nt")
+    if os.name != "nt":
+        return subprocess.Popen(argv, **kwargs)
+    try:  # break out of the loop's job object so the supervisor outlives the loop task
+        return subprocess.Popen(argv, creationflags=jobs.DETACHED | jobs.BREAKAWAY, **kwargs)
+    except OSError:
+        return subprocess.Popen(argv, creationflags=jobs.DETACHED, **kwargs)
+
+
+def exchange_watchdog(cfg, config_path, book, now=None, alive=None, run=None, launch=None):
+    """Restart the exchange supervisor when it died without a human STOP request.
+
+    On 2026-09-26 both PCs lost the supervisor (exit 0xC000013A) and Task Scheduler did not restart
+    it, so file exchange stopped for three hours unnoticed. Checks at most once a minute; restarts at
+    most once per 10 minutes, via the scheduled task first and start_exchange.ps1 directly otherwise.
+    Returns {"message", "alert"} when it acted, else None.
+    """
+    now = now or utc_now()
+    state_root = Path(cfg["state_root"])
+    if (state_root / "STOP").exists() or not (state_root / "syncthing").is_dir():
+        return None  # stopped on purpose, or no exchange installed on this PC
+    last = book.get("exchange_check_utc")
+    if last and (now - parse_utc(last)).total_seconds() < 60:
+        return None
+    book["exchange_check_utc"] = utc_text(now)
+    if (exchange_supervisor_alive() if alive is None else alive) is not False:
+        return None
+    worker_state = state_root / "worker-state.json"
+    idle = now.timestamp() - worker_state.stat().st_mtime if worker_state.exists() else None
+    if idle is not None and idle < 120:
+        return None  # just restarted; its first worker run is still on the way
+    previous = book.get("exchange_restart_utc")
+    if previous and (now - parse_utc(previous)).total_seconds() < 600:
+        return None
+    history = [t for t in book.get("exchange_restart_history", []) if (now - parse_utc(t)).total_seconds() < 3600]
+    book["exchange_restart_utc"] = utc_text(now)
+    book["exchange_restart_history"] = (history + [utc_text(now)])[-5:]
+    idle_text = "unknown" if idle is None else f"{idle / 60:.0f} min"
+    task = EXCHANGE_TASK.format(role=cfg["role"])
+    result = (run or _run_quiet)(["schtasks", "/Run", "/TN", task])
+    if result.returncode == 0:
+        message = f"exchange watchdog: supervisor gone, worker idle {idle_text}; started task {task}"
+        return {"message": message, "alert": len(history) >= 2}
+    script = Path(cfg["project_root"]) / "scripts" / "start_exchange.ps1"
+    try:
+        (launch or _launch_detached)(["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+                                      "-File", str(script), "-Config", str(config_path)], cfg["project_root"])
+    except OSError as error:
+        return {"message": f"exchange watchdog: supervisor gone, worker idle {idle_text}; restart failed: {error}", "alert": True}
+    message = (f"exchange watchdog: supervisor gone, worker idle {idle_text}; task {task} unavailable "
+               f"({(result.stderr or result.stdout).strip()[:120]}), launched start_exchange.ps1")
+    return {"message": message, "alert": len(history) >= 2}
+
+
 def tick(cfg, config_path, policy, allow_cycle=True):
     """One non-blocking iteration. Returns a small status dict for logging."""
     imported = packets.import_inbox(cfg)
@@ -495,8 +573,20 @@ def tick(cfg, config_path, policy, allow_cycle=True):
     launched = jobs.launch_queued(cfg, config_path)
     with ledger(cfg) as book:
         book["loop_heartbeat_utc"] = utc_text()
+        try:
+            watchdog = exchange_watchdog(cfg, config_path, book)
+        except Exception as error:  # the watchdog must never stop the loop
+            watchdog = {"message": f"exchange watchdog error: {type(error).__name__}: {error}", "alert": False}
         reasons, blocked = wake_reasons(cfg, policy, book) if allow_cycle else ([], "cycle running")
-    return {"imported": imported, "lost_jobs": lost, "launched_jobs": launched, "reasons": reasons, "blocked": blocked}
+    if watchdog:
+        # Logged here, not in loop(): a hot-reloaded tick() runs under the old loop() body.
+        _log(agent_root(cfg) / "loop.log", watchdog["message"])
+        if watchdog["alert"]:
+            notify(cfg, {"human_actions": [f"{cfg['role']}: 교환 서비스 자동 복구에 문제가 있습니다. 1시간 안에 3번째로 멈췄거나 "
+                                           f"다시 켜지 못했습니다. 원인을 확인해 주세요({agent_root(cfg) / 'loop.log'}). "
+                                           f"최근 기록: {watchdog['message']}"]})
+    return {"imported": imported, "lost_jobs": lost, "launched_jobs": launched, "reasons": reasons, "blocked": blocked,
+            "watchdog": watchdog["message"] if watchdog else None}
 
 
 def loop(cfg, config_path, once=False):
