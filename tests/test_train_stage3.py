@@ -177,5 +177,45 @@ class TrainStage3DataTest(unittest.TestCase):
                         identities=None, predict_speed=True, rule=self.rule)
 
 
+    def test_evaluate_stopped_head_overrides_accel(self):
+        # e004: a 3-tuple model (speed, steer, stopped_logit). Where the STOPPED head
+        # fires (prob >= threshold) the derived accel class must become STOPPED, and
+        # the records must carry a stopped_prob column.
+        class _SpeedStoppedModel(torch.nn.Module):
+            def forward(self, clips):
+                b = clips.shape[0]
+                speeds = torch.full((b,), 20.0)  # high speed -> derive never STOPPED
+                stopped_logit = torch.full((b,), 10.0)  # sigmoid ~1 -> always fires
+                return speeds[:, None], torch.zeros(b, len(TR.STEER)), stopped_logit[:, None]
+
+        val = TR.S3ClipDataset(self.tmp, self.aux, "validation", self.rule, window=16, stride=1)
+        loader = torch.utils.data.DataLoader(val, batch_size=2, shuffle=False)
+        ids = list(val.samples)
+        metrics, records = TR.evaluate(
+            _SpeedStoppedModel(), loader, torch.device("cpu"), amp=False,
+            identities=ids, predict_speed=True, rule=self.rule,
+            predict_stopped=True, stopped_threshold=0.5,
+        )
+        self.assertIn("stopped_prob", records.columns)
+        self.assertEqual(set(records["accel_pred"]), {"STOPPED"})
+
+    def test_evaluate_stopped_head_below_threshold_keeps_accel(self):
+        # A STOPPED head that never fires (prob < threshold) leaves the derived class.
+        class _NeverStopped(torch.nn.Module):
+            def forward(self, clips):
+                b = clips.shape[0]
+                return torch.full((b, 1), 20.0), torch.zeros(b, len(TR.STEER)), torch.full((b, 1), -10.0)
+
+        val = TR.S3ClipDataset(self.tmp, self.aux, "validation", self.rule, window=16, stride=1)
+        loader = torch.utils.data.DataLoader(val, batch_size=2, shuffle=False)
+        ids = list(val.samples)
+        _metrics, records = TR.evaluate(
+            _NeverStopped(), loader, torch.device("cpu"), amp=False,
+            identities=ids, predict_speed=True, rule=self.rule,
+            predict_stopped=True, stopped_threshold=0.5,
+        )
+        self.assertNotIn("STOPPED", set(records["accel_pred"]))
+
+
 if __name__ == "__main__":
     unittest.main()

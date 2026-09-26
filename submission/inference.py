@@ -237,9 +237,10 @@ S3_RULE = {"window": 5, "v_stop": 0.5, "a_db": 0.2, "s_th": 4.5, "bias": -0.3}
 
 
 class _Stage3MViT(nn.Module):
-    def __init__(self, predict_speed=False):
+    def __init__(self, predict_speed=False, predict_stopped=False):
         super().__init__()
         self.predict_speed = bool(predict_speed)
+        self.predict_stopped = bool(predict_stopped)
         self.backbone = mvit_v2_s(weights=None)
         dimension = self.backbone.head[1].in_features
         self.backbone.head = nn.Identity()
@@ -248,10 +249,14 @@ class _Stage3MViT(nn.Module):
         else:
             self.accel = nn.Linear(dimension, 4)
         self.steer = nn.Linear(dimension, 3)
+        if self.predict_stopped:
+            self.stopped = nn.Linear(dimension, 1)
 
     def forward(self, x):
         features = self.backbone(x)
         head = self.speed if self.predict_speed else self.accel
+        if self.predict_stopped:
+            return head(features), self.steer(features), self.stopped(features)
         return head(features), self.steer(features)
 
 
@@ -315,7 +320,11 @@ def predict_stage3(data_dir, model_dir):
     # e003 checkpoints predict speed/speed_scale; recover m/s before the rule derive.
     # Default 1.0 keeps e001 (accel head) and e002 (no key) byte-identical.
     speed_scale = float(checkpoint.get("speed_scale", 1.0))
-    model = _Stage3MViT(predict_speed=predict_speed)
+    # e004 checkpoints add a binary STOPPED head whose firing overrides the accel
+    # class (the speed head cannot produce STOPPED). Absent key -> byte-identical.
+    predict_stopped = bool(checkpoint.get("predict_stopped", False)) or "stopped.weight" in state
+    stopped_threshold = float(checkpoint.get("stopped_threshold", 0.5))
+    model = _Stage3MViT(predict_speed=predict_speed, predict_stopped=predict_stopped)
     model.load_state_dict(state)
     model.to(device).eval()
     videos = _video_paths(Path(data_dir) / "videos")
@@ -325,24 +334,32 @@ def predict_stage3(data_dir, model_dir):
             frames = _stage3_frames(path)
             count = len(frames)
             centers = np.arange(count)
-            head_predictions, steer_predictions = [], []
+            head_predictions, steer_predictions, stopped_predictions = [], [], []
             for start in range(0, count, 8):
                 center = centers[start : start + 8]
                 indices = np.clip(center[:, None] - 8 + np.arange(16)[None, :], 0, count - 1)
                 clips = frames[torch.from_numpy(indices)].permute(0, 2, 1, 3, 4).float() / 255.0
                 clips = (clips - S3_MEAN[None, :, None, :, :]) / S3_STD[None, :, None, :, :]
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    head_logits, steer_logits = model(clips.to(device, non_blocking=True))
+                    out = model(clips.to(device, non_blocking=True))
+                head_logits, steer_logits = out[0], out[1]
                 if predict_speed:
                     head_predictions.extend(head_logits.squeeze(-1).float().cpu().tolist())
                 else:
                     head_predictions.extend(head_logits.argmax(1).cpu().tolist())
                 steer_predictions.extend(steer_logits.argmax(1).cpu().tolist())
+                if predict_stopped:
+                    stopped_predictions.extend(torch.sigmoid(out[2].squeeze(-1).float()).cpu().tolist())
             if predict_speed:
                 head_predictions = [v * speed_scale for v in head_predictions]
                 accel_labels = _accel_from_speed(head_predictions, rule)
             else:
                 accel_labels = [ACCEL[i] for i in head_predictions]
+            if predict_stopped:
+                accel_labels = [
+                    "STOPPED" if p >= stopped_threshold else a
+                    for p, a in zip(stopped_predictions, accel_labels)
+                ]
             for sample_index, (accel_label, steer) in enumerate(zip(accel_labels, steer_predictions)):
                 rows.append(
                     {

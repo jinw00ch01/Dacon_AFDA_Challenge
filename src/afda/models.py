@@ -48,13 +48,21 @@ class Stage3MViT(nn.Module):
     is derived from predicted speed downstream (afda.stage3_labels). The two heads
     are named differently (``accel`` vs ``speed``) so a checkpoint loads only into
     the matching variant and never silently into the wrong one.
+
+    ``predict_stopped=True`` (e004): adds a scalar binary STOPPED head. The speed
+    head is miscalibrated at low speed (Pro LOSO qa: it shrinks toward the mean so
+    speed<v_stop never fires and STOPPED F1 stays 0), so a direct STOPPED classifier
+    is added and its firing overrides the derived/argmax accel class downstream. The
+    head is orthogonal to the accel/speed choice; when disabled the forward returns
+    the original 2-tuple byte-identically so e001/e002/e003 are unchanged.
     """
 
-    def __init__(self, predict_speed: bool = False):
+    def __init__(self, predict_speed: bool = False, predict_stopped: bool = False):
         super().__init__()
         from torchvision.models.video import mvit_v2_s
 
         self.predict_speed = bool(predict_speed)
+        self.predict_stopped = bool(predict_stopped)
         self.backbone = mvit_v2_s(weights=None)
         dimension = self.backbone.head[1].in_features
         self.backbone.head = nn.Identity()
@@ -63,10 +71,14 @@ class Stage3MViT(nn.Module):
         else:
             self.accel = nn.Linear(dimension, 4)
         self.steer = nn.Linear(dimension, 3)
+        if self.predict_stopped:
+            self.stopped = nn.Linear(dimension, 1)
 
     def forward(self, x):
         features = self.backbone(x)
         head = self.speed if self.predict_speed else self.accel
+        if self.predict_stopped:
+            return head(features), self.steer(features), self.stopped(features)
         return head(features), self.steer(features)
 
 

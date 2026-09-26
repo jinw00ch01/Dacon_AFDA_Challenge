@@ -92,6 +92,21 @@ class ModelShapeTests(unittest.TestCase):
         self.assertEqual(model.accel.out_features, 4)
         self.assertEqual(model.steer.out_features, 3)
 
+    def test_stage3_stopped_head_optional(self):
+        # e004: predict_stopped adds a scalar STOPPED head and a 3-tuple forward,
+        # while the default stays a 2-tuple so e001/e002/e003 are byte-identical.
+        plain = models.Stage3MViT()
+        self.assertFalse(hasattr(plain, "stopped"))
+        with_stop = models.Stage3MViT(predict_stopped=True)
+        self.assertEqual(with_stop.stopped.out_features, 1)
+        # submission-inlined copy must add the same head and load a trained state_dict
+        sub = _load_submission()
+        sub_stop = sub._Stage3MViT(predict_speed=True, predict_stopped=True)
+        self.assertEqual(
+            set(sub_stop.state_dict().keys()),
+            set(models.Stage3MViT(predict_speed=True, predict_stopped=True).state_dict().keys()),
+        )
+
     def test_stage2_temporal_forward(self):
         model = models.Stage2Temporal().eval()
         with torch.inference_mode():

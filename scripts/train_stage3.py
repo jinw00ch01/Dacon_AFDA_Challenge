@@ -70,6 +70,17 @@ DEFAULTS = {
     # multiply the prediction back by speed_scale before deriving accel. Default
     # 1.0 leaves e001/e002 byte-identical.
     "speed_scale": 1.0,
+    # e004: add a binary STOPPED head. The speed head cannot produce STOPPED (Pro
+    # LOSO qa 13cad578: predictions shrink toward the mean at low speed, so
+    # speed<v_stop never fires and STOPPED F1 stays 0, capping accel Macro-F1 at
+    # 0.75). A direct STOPPED classifier is trained with BCE and its firing
+    # overrides the derived/argmax accel class in eval and submission. False keeps
+    # e001/e002/e003 byte-identical (model returns the 2-tuple, no STOPPED head).
+    "predict_stopped": False,
+    # weight of the STOPPED BCE term in the joint loss (BCE ~O(1), like steer CE).
+    "stopped_loss_weight": 1.0,
+    # sigmoid(stopped_logit) >= this fires the STOPPED override (default 0.5).
+    "stopped_threshold": 0.5,
 }
 
 
@@ -173,7 +184,8 @@ def steer_metrics(a_true, s_true, s_pred):
 
 
 @torch.inference_mode()
-def evaluate(model, loader, device, amp, identities=None, predict_speed=False, rule=None, speed_scale=1.0):
+def evaluate(model, loader, device, amp, identities=None, predict_speed=False, rule=None,
+             speed_scale=1.0, predict_stopped=False, stopped_threshold=0.5):
     """Return summary metrics and, if `identities` (list of (source_id, sample_index))
     aligned to the loader's fixed order is given, per-sample prediction records.
 
@@ -181,12 +193,20 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
     class is derived per source from the predicted-speed sequence with the SAME rule
     the submission uses (afda.stage3_labels.derive_accel_column), so accel is scored
     exactly as it ships. `identities` is then required (the derivation needs
-    source_id/sample_index to order each recording's speeds)."""
+    source_id/sample_index to order each recording's speeds).
+
+    When `predict_stopped` is True the model returns a third scalar STOPPED logit;
+    sigmoid(logit) >= stopped_threshold overrides the accel class to STOPPED (the
+    speed head cannot produce STOPPED on its own -- Pro LOSO qa 13cad578)."""
     model.eval()
     a_true, a_pred, s_true, s_pred, speed_pred = [], [], [], [], []
+    stopped_prob = []
     for clips, accel, steer, _speed in loader:
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-            head_out, steer_logits = model(clips.to(device, non_blocking=True))
+            out = model(clips.to(device, non_blocking=True))
+        head_out, steer_logits = out[0], out[1]
+        if predict_stopped:
+            stopped_prob.extend(torch.sigmoid(out[2].squeeze(-1).float()).cpu().tolist())
         s_pred.extend(steer_logits.argmax(1).cpu().tolist())
         a_true.extend(accel.tolist())
         s_true.extend(steer.tolist())
@@ -213,6 +233,10 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
         )
         derived = stage3_labels.derive_accel_column(speed_df, "speed_pred", rule)
         a_pred = [ACCEL.index(x) for x in derived]
+
+    if predict_stopped:
+        # binary STOPPED head overrides the derived/argmax accel class where it fires
+        a_pred = [STOPPED_IDX if p >= stopped_threshold else a for p, a in zip(stopped_prob, a_pred)]
 
     accel_f1 = macro_f1(a_true, a_pred, len(ACCEL))
     steer_f1_official, steer_f1_incl, n_stopped = steer_metrics(a_true, s_true, s_pred)
@@ -250,6 +274,8 @@ def evaluate(model, loader, device, amp, identities=None, predict_speed=False, r
         }
         if predict_speed:
             cols["speed_pred"] = speed_pred
+        if predict_stopped:
+            cols["stopped_prob"] = stopped_prob
         records = pd.DataFrame(cols)
     return metrics, records
 
@@ -296,10 +322,17 @@ def main() -> int:
 
     predict_speed = bool(cfg["predict_speed"])
     speed_scale = float(cfg.get("speed_scale", 1.0))
-    model = Stage3MViT(predict_speed=predict_speed)
+    predict_stopped = bool(cfg.get("predict_stopped", False))
+    stopped_loss_weight = float(cfg.get("stopped_loss_weight", 1.0))
+    stopped_threshold = float(cfg.get("stopped_threshold", 0.5))
+    model = Stage3MViT(predict_speed=predict_speed, predict_stopped=predict_stopped)
     init = init_backbone(model, cfg["init_pretrained"])
     model.to(device)
-    print(f"backbone init: {init} | head={'speed' if predict_speed else 'accel'}", flush=True)
+    print(
+        f"backbone init: {init} | head={'speed' if predict_speed else 'accel'}"
+        f"{' +stopped' if predict_stopped else ''}",
+        flush=True,
+    )
 
     steer_w = class_weights(train_set.steer, len(STEER)).to(device)
     steer_loss = nn.CrossEntropyLoss(weight=steer_w)
@@ -310,6 +343,14 @@ def main() -> int:
         accel_w = class_weights(train_set.accel, len(ACCEL)).to(device)
         accel_loss = nn.CrossEntropyLoss(weight=accel_w)
         speed_loss = None
+    if predict_stopped:
+        # pos_weight balances the rare STOPPED positives (BCEWithLogits handles logits).
+        n_stopped = int(np.sum(np.asarray(train_set.accel) == STOPPED_IDX))
+        n_other = len(train_set.accel) - n_stopped
+        pos_weight = torch.tensor([n_other / max(1, n_stopped)], dtype=torch.float32, device=device)
+        stopped_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        stopped_loss = None
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     grad_accum = max(1, int(cfg["grad_accum"]))
@@ -330,12 +371,17 @@ def main() -> int:
             steer = steer.to(device, non_blocking=True)
             speed = speed.to(device, non_blocking=True).float()
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-                head_out, steer_logits = model(clips)
+                out = model(clips)
+                head_out, steer_logits = out[0], out[1]
                 if predict_speed:
                     head_term = speed_loss(head_out.squeeze(-1).float(), speed / speed_scale)
                 else:
                     head_term = accel_loss(head_out, accel)
-                loss = (head_term + steer_loss(steer_logits, steer)) / grad_accum
+                total = head_term + steer_loss(steer_logits, steer)
+                if predict_stopped:
+                    stopped_target = (accel == STOPPED_IDX).float()
+                    total = total + stopped_loss_weight * stopped_loss(out[2].squeeze(-1).float(), stopped_target)
+                loss = total / grad_accum
             scaler.scale(loss).backward()
             if (step + 1) % grad_accum == 0:
                 scaler.step(optimizer)
@@ -348,6 +394,7 @@ def main() -> int:
             metrics, records = evaluate(
                 model, val_loader, device, amp, identities=val_ids,
                 predict_speed=predict_speed, rule=cfg["rule"], speed_scale=speed_scale,
+                predict_stopped=predict_stopped, stopped_threshold=stopped_threshold,
             )
         else:
             metrics, records = {}, None
@@ -369,6 +416,8 @@ def main() -> int:
                     "init": init,
                     "head_kind": "speed" if predict_speed else "accel",
                     "speed_scale": speed_scale,
+                    "predict_stopped": predict_stopped,
+                    "stopped_threshold": stopped_threshold,
                     "val_metrics": metrics,
                     "label_source": "proxy_rule_v1b (not official GT)",
                 },
