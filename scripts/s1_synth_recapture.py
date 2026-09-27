@@ -12,6 +12,11 @@ Re-capture model per variant (seeded by source id and k):
   final:   resize to OUT_W x OUT_H and the same mp4v writer as the original
 Every output of a source keeps the source split (s23_capture_ready.csv confirmed_split).
 A manifest CSV with parameters and SHA-256 is written next to the videos. All outputs are "synthetic".
+
+--profile v1s (decision 9f59432f, HF direction gate): same seed stream as v1, but blur_sigma is mapped into
+[0, 0.6] and contrast into [0.95, 1.0], and one texture pass is added after the final resize at the model's
+224 input scale (per-frame sensor noise + a slowly drifting moire beat, both drawn on a 224x224 grid and
+upsampled), so that the re-capture keeps more high frequency than the original at 224, as S23 captures do.
 """
 import argparse
 import csv
@@ -25,7 +30,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAN = ROOT / "data/derived/comma_subset_v1/s23_capture_ready.csv"
+PLAN_REL = "data/derived/comma_subset_v1/s23_capture_ready.csv"
 OUT_W, OUT_H, OUT_FPS = 960, 540, 30.0
 CANVAS_W, CANVAS_H = 1280, 720  # camera sensor canvas before final resize
 
@@ -74,6 +79,48 @@ def sample_params(rng):
         "noise_sigma": round(rng.uniform(1.0, 5.0), 2),
         "jpeg_quality": rng.randint(55, 90),
     }
+
+
+def v1s_params(p, seed, src, k):
+    """Map v1 parameters into the v1s range and draw the 224-scale texture from a separate stream,
+    so every other parameter of a v1s variant equals the v1 variant with the same seed."""
+    q = dict(p)
+    q["blur_sigma"] = round(p["blur_sigma"] * 0.6 / 1.6, 3)
+    q["contrast"] = round(0.95 + (p["contrast"] - 0.8) * 0.25, 3)
+    r = random.Random(f"{seed}|{src}|{k}|v1s")
+    q["tex_noise_sigma"] = round(r.uniform(*V1S_NOISE), 2)
+    q["moire_amp"] = round(r.uniform(*V1S_MOIRE), 4)
+    q["moire_period_224"] = round(r.uniform(2.2, 4.0), 3)
+    q["moire_beat_224"] = round(r.uniform(12.0, 40.0), 2)
+    q["moire_angle_deg"] = round(r.uniform(-12, 12), 2)
+    q["tex_seed"] = r.randint(0, 2**31)
+    return q
+
+
+V1S_NOISE = (4.0, 9.0)
+V1S_MOIRE = (0.03, 0.08)
+TEX = 224
+
+
+def build_texture(p):
+    yy, xx = np.mgrid[0:TEX, 0:TEX].astype(np.float32)
+    a = math.radians(p["moire_angle_deg"])
+    u = xx * math.cos(a) + yy * math.sin(a)
+    v = -xx * math.sin(a) + yy * math.cos(a)
+    return {"u": u, "v": v, "nrng": np.random.default_rng(p["tex_seed"])}
+
+
+def texture_frame(img, tx, p, t):
+    """One pass at the 224 input scale: multiplicative moire beat (drifting phase) + additive sensor noise."""
+    ph = 2 * np.pi * 0.35 * t
+    m = np.cos(2 * np.pi * tx["u"] / p["moire_period_224"] + ph) * (0.5 + 0.5 * np.cos(2 * np.pi * tx["v"] / p["moire_beat_224"] + 0.3 * ph))
+    n = tx["nrng"].normal(0, p["tex_noise_sigma"], (TEX, TEX, 3)).astype(np.float32)
+    n += tx["nrng"].normal(0, p["tex_noise_sigma"] * 0.5, (TEX, TEX, 1)).astype(np.float32)  # luma-correlated part
+    h, w = img.shape[:2]
+    m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)[..., None]
+    n = cv2.resize(n, (w, h), interpolation=cv2.INTER_LINEAR)
+    out = img.astype(np.float32) * (1.0 + p["moire_amp"] * m) + n
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def stripe_mask(h, w, period, strength):
@@ -144,9 +191,9 @@ def sha256(path):
     return h.hexdigest()
 
 
-def process_source(row, out_dir, variants, seed):
+def process_source(row, out_dir, variants, seed, data_root, profile="v1"):
     src = row["planned_source_id"]
-    frames, fps = read_frames(ROOT / row["source_path"])
+    frames, fps = read_frames(data_root / row["source_path"])
     n_out = int(round(len(frames) / fps * OUT_FPS))
     records = []
     # original pair: nearest display frame, same final resize and writer
@@ -159,6 +206,9 @@ def process_source(row, out_dir, variants, seed):
     for k in range(variants):
         rng = random.Random(f"{seed}|{src}|{k}")
         p = sample_params(rng)
+        if profile == "v1s":
+            p = v1s_params(p, seed, src, k)
+            tx = build_texture(p)
         st = build_static(p, rng, frames[0].shape[0], frames[0].shape[1])
         path = out_dir / f"{src}_SYN{k}.mp4"
         w = writer(path)
@@ -172,13 +222,16 @@ def process_source(row, out_dir, variants, seed):
             # exposure straddles the next display frame when frac > 1 - blend_exposure
             wgt = max(0.0, (frac - (1 - p["blend_exposure"])) / max(p["blend_exposure"], 1e-6))
             disp = f0 if wgt <= 0 or a + 1 >= len(frames) else cv2.addWeighted(f0, 1 - wgt, frames[a + 1], wgt, 0)
-            w.write(final(recapture_frame(disp, st, p, rng, t)))
+            out = final(recapture_frame(disp, st, p, rng, t))
+            if profile == "v1s":
+                out = texture_frame(out, tx, p, t)
+            w.write(out)
         w.release()
         records.append({"file": path.name, "variant": f"SYN{k}", "label": "recapture_synthetic", "params": p})
     out = []
     for r in records:
         fpath = out_dir / r["file"]
-        out.append({"file": r["file"], "source_id": src, "origin_group": row["origin_group"], "split": row["confirmed_split"],
+        out.append({"file": r["file"], "profile": profile, "source_id": src, "origin_group": row["origin_group"], "split": row["confirmed_split"],
                     "label": r["label"], "synthetic": 1, "variant": r["variant"], "frames": n_out, "fps": OUT_FPS,
                     "width": OUT_W, "height": OUT_H, "bytes": fpath.stat().st_size, "sha256": sha256(fpath),
                     "source_playback": row["source_path"], "params": json.dumps(r["params"], separators=(",", ":"))})
@@ -192,20 +245,24 @@ def main():
     ap.add_argument("--seed", default="s1synth_v1")
     ap.add_argument("--sources", nargs="*", help="limit to these source ids")
     ap.add_argument("--preview", action="store_true", help="also write a PNG of frame 45 for each output")
+    ap.add_argument("--profile", choices=["v1", "v1s"], default="v1")
+    ap.add_argument("--manifest", default="manifest.csv", help="manifest file name (parallel parts write separate files)")
+    ap.add_argument("--data-root", type=Path, default=ROOT, help="checkout holding data/derived (for worktrees)")
     args = ap.parse_args()
     out_dir = args.out if args.out.is_absolute() else ROOT / args.out
+    PLAN = args.data_root / PLAN_REL
     out_dir.mkdir(parents=True, exist_ok=True)
     with PLAN.open(encoding="utf-8-sig", newline="") as f:
         plan = {}
         for r in csv.DictReader(f):
             plan.setdefault(r["planned_source_id"], r)
     ids = args.sources or sorted(plan)
-    manifest = out_dir / "manifest.csv"
+    manifest = out_dir / args.manifest
     new = not manifest.exists()
     with manifest.open("a", encoding="utf-8", newline="") as mf:
         wr = None
         for sid in ids:
-            rows = process_source(plan[sid], out_dir, args.variants, args.seed)
+            rows = process_source(plan[sid], out_dir, args.variants, args.seed, args.data_root, args.profile)
             if wr is None:
                 wr = csv.DictWriter(mf, list(rows[0]))
                 if new:
