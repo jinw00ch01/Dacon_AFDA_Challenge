@@ -158,9 +158,12 @@ def main() -> int:
             print(f"{i}/{len(vids)} done (parity_fail so far={n_bad})", flush=True)
 
     # Greedy batch assignment (<= BATCH_BYTES per request packet).
-    batch, acc, bidx = [], 0, 1
+    # acc>0 guards against emitting an empty batch when a single file exceeds
+    # the cap (it still lands alone in its own batch rather than splitting into
+    # an empty one before it).
+    acc, bidx = 0, 1
     for r in rows:
-        if acc + r["out_bytes"] > BATCH_BYTES and batch:
+        if acc + r["out_bytes"] > BATCH_BYTES and acc > 0:
             bidx += 1
             acc = 0
         r["batch"] = bidx
