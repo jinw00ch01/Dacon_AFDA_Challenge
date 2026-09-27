@@ -471,6 +471,7 @@ def evaluate(model, items, device, amp):
             sd_t.append(it["side"]); sd_p.append(int(scene[:, 2:].argmax(1)))
     mae = lambda xs: (float(np.mean(xs)) if xs else None)
     acc = lambda t, p: (float(np.mean(np.asarray(t) == np.asarray(p))) if t else None)
+    f1 = lambda t, p: (metrics.macro_f1(t, p, labels=[0, 1]) if t else None)
     c_mae, e_mae = mae(c_err), mae(e_err)
     finite = [m for m in (c_mae, e_mae) if m is not None]
     return {
@@ -479,6 +480,8 @@ def evaluate(model, items, device, amp):
         "entry_mae_s": e_mae, "n_entry": len(e_err),
         "evasion_acc": acc(ev_t, ev_p), "n_evasion": len(ev_t),
         "side_acc": acc(sd_t, sd_p), "n_side": len(sd_t),
+        # dir_f1/evasion_f1 = Macro-F1 (labels [0,1]) used by select_metric='scene_f1'.
+        "dir_f1": f1(sd_t, sd_p), "evasion_f1": f1(ev_t, ev_p),
         "time_mae_s": (float(np.mean(finite)) if finite else None),
     }
 
@@ -643,6 +646,8 @@ def main() -> int:
         "val_videos": len(val_items),
         "best": (best if (best.get("official_s2", float("-inf")) != float("-inf")
                           if use_official
+                          else best.get("scene_f1", float("-inf")) != float("-inf")
+                          if use_scene
                           else best.get("time_mae_s", float("inf")) != float("inf"))
                  else None),
         "const_baseline": const,
