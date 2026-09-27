@@ -547,8 +547,9 @@ def main() -> int:
         prior_c_t = prior_e_t = None
     select_metric = cfg.get("select_metric") or "time_mae_s"
     use_official = (select_metric == "official_s2")
+    use_scene = (select_metric == "scene_f1")
 
-    best = {"time_mae_s": float("inf"), "official_s2": float("-inf")}
+    best = {"time_mae_s": float("inf"), "official_s2": float("-inf"), "scene_f1": float("-inf")}
     history = []
     for epoch in range(int(cfg["epochs"])):
         model.train()
@@ -605,11 +606,17 @@ def main() -> int:
         if use_official:
             score = metrics.get("official_s2")
             improved = score is not None and score > best.get("official_s2", float("-inf"))
+        elif use_scene:
+            d, e = metrics.get("dir_f1"), metrics.get("evasion_f1")
+            score = (float(d) + float(e)) / 2.0 if (d is not None and e is not None) else None
+            improved = score is not None and score > best.get("scene_f1", float("-inf"))
         else:
             score = metrics.get("time_mae_s")
             improved = score is not None and score < best.get("time_mae_s", float("inf"))
         if improved:
             best = metrics
+            if use_scene:
+                best["scene_f1"] = score
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -618,7 +625,7 @@ def main() -> int:
                 },
                 out_dir / "best.pt",
             )
-            tag = "official_s2" if use_official else "time_mae_s"
+            tag = "official_s2" if use_official else ("scene_f1" if use_scene else "time_mae_s")
             print(f"  saved best.pt ({tag}={score:.3f})", flush=True)
 
     # Always leave a checkpoint even if validation had no time labels.

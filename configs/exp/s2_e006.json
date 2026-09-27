@@ -1,0 +1,14 @@
+{
+  "_note": "S2 e006 = ONE change vs e005: checkpoint selection criterion switched from min time_mae_s to max scene F1 (mean of dir_f1 + evasion_f1) via new select_metric='scene_f1'. Rationale (result b00984f5): e005 FAILED the scene gate NOT because v7 labels are bad but because min-time_mae_s selection saved best.pt at epoch 1, where the SCENE head (evasion_space + entry_side) was still untrained. This run selects the checkpoint that maximizes scene Macro-F1 directly, so the saved best.pt actually reflects a trained scene head. Everything else matches e005/e001: same v7 cache (data/derived/s2_feat_cache_v7), full-clip path (no resample/window/bias/prior), full-sequence eval, 30 epochs, lr 1e-3, seed 0. Decision 11 freezes S2 collision/entry TIMING at the v001 model output (LB S2 best 0.2060); this run is evaluated ONLY for its SCENE heads (dir + evasion Macro-F1), not to replace timing. GATE (pre-registered, computed next cycle by eval_stage2_scene_gate.py loading BOTH e001 and e006 on the SAME v7 val, NO loosening): report per-head dir/evasion Macro-F1 vs e001. IMPORTANT per decisions 9bb29d60 + 8c33234b: the e001 v7-val scene numbers (dir 0.804 / evasion 0.883) are CONTAMINATED (16/21 val videos are e001 training videos after the v6->v7 stratified split reshuffle); the honest baseline is the constant-predictor lower bound (dir F1 ~0.33 all-RIGHT, evasion F1 ~0.40 all-1) plus the 4-condition scene gate (video-unit 5-fold CV OOF CI-lower > constant + mode <= 0.9 + permutation-null p<0.05 [practical F1 ~0.63-0.65] + integrity). Report BOTH the raw e001-vs-e006 comparison AND the permutation-null verdict; adopt scene graft only if e006 clears the permutation-null gate. Labels are agent+human v7 proxy (NOT official GT); report label source counts. Separate out-dir preserves confirmed v001 models/stage2 (e001).",
+  "experiment_id": "s2-e006",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v7",
+  "select_metric": "scene_f1",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2_e006"
+}
