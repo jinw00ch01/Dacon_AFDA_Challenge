@@ -85,6 +85,19 @@ def read_split(manifest_csv, video_root, split):
     return rows
 
 
+def read_split_sources(sources, split):
+    """Concatenate one split across several (manifest_csv, video_root) releases.
+
+    Each source is a dict {manifest_csv, video_root}. Split assignment must be
+    consistent per identity across releases (verified offline: v1/v1s/v1c share
+    the same source_id->split map) so origin_groups never straddle the split.
+    """
+    rows = []
+    for s in sources:
+        rows.extend(read_split(ROOT / s["manifest_csv"], ROOT / s["video_root"], split))
+    return rows
+
+
 class S1ClipDataset(Dataset):
     """One item = one (video, slot) clip -> (3,frames,size,size) + class + video index.
 
@@ -196,10 +209,14 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     amp = bool(cfg["amp"]) and device.type == "cuda"
 
-    manifest_csv = ROOT / cfg["manifest_csv"]
-    video_root = ROOT / cfg["video_root"]
-    train_rows = read_split(manifest_csv, video_root, "train")
-    val_rows = read_split(manifest_csv, video_root, "validation")
+    if cfg.get("sources"):
+        train_rows = read_split_sources(cfg["sources"], "train")
+        val_rows = read_split_sources(cfg["sources"], "validation")
+    else:
+        manifest_csv = ROOT / cfg["manifest_csv"]
+        video_root = ROOT / cfg["video_root"]
+        train_rows = read_split(manifest_csv, video_root, "train")
+        val_rows = read_split(manifest_csv, video_root, "validation")
     if not train_rows:
         raise SystemExit("no train videos; is the s1-synth release present?")
     train_set = S1ClipDataset(train_rows, cfg["size"], cfg["frames"], cfg["slots"])
