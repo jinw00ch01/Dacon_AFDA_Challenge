@@ -1,0 +1,13 @@
+{
+  "_note": "S2 e005 = ONE change vs e001: swap the feature cache to the v7 label release (data/derived/s2_feat_cache_v7, built by job s2-cache-v7 from s2-labels-v7-20260926). v7 adds human-reviewed scene labels over v6 (evasion_valid 31->40, side_valid 41->51, collision_valid 59->68, entry_valid 26->38) so the SCENE head (evasion_space + entry_side) trains on more supervision. Everything else matches e001: full-clip path (no resample/window/bias/prior), full-sequence eval, checkpoint by min time_mae_s. Rationale: decision e3f279c0 accepted v7 as meaningful for the scene head only; decision 11 freezes S2 collision/entry TIMING at the v001 model output (LB S2 best 0.2060), so this run is evaluated for its SCENE heads (dir + evasion Macro-F1), NOT to replace timing. GATE (pre-registered, computed next cycle by a separate eval loading BOTH e001 and e005 on the SAME v7 val): e005 dir Macro-F1 AND evasion Macro-F1 each >= the v001/e001 model re-evaluated on the identical v7 val (baseline reset per the v7 val-membership-shift caveat, STATUS 22:52). If e005 scene does not beat v001 scene on the same val, the mid-submission S2 stays fully v001 and no scene graft is wired. If it does, wiring v001-timing + e005-scene requires a two-model inference change + repackage + validate_zip + tests, judged separately; LB S2 is the final arbiter. Labels are agent+human v7 proxy (NOT official GT); report label source counts. Separate out-dir preserves the confirmed v001 models/stage2 (e001).",
+  "experiment_id": "s2-e005",
+  "stage": "stage2",
+  "cache_dir": "data/derived/s2_feat_cache_v7",
+  "epochs": 30,
+  "lr": 1e-3,
+  "weight_decay": 1e-4,
+  "grad_accum": 8,
+  "seed": 0,
+  "amp": true,
+  "out_dir": "models/stage2_e005"
+}
