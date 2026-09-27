@@ -81,6 +81,23 @@ class PreprocessEquivalenceTests(unittest.TestCase):
             self.assertEqual(preprocess.frame_number(Path(stem + ".jpg")), want)
             self.assertEqual(self.sub._frame_number(Path(stem + ".jpg")), want)
 
+    def test_stage2_motion_rule_matches(self):
+        # decision 12-A/12-B: the inlined collision/entry timing rule must stay
+        # byte-identical to the module Pro validated on held-out windows.
+        from afda import s2_motion_rule as rule
+        self.assertEqual((self.sub._S2_SIZE, self.sub._S2_LAG, self.sub._S2_ENTRY_K),
+                         (rule.SIZE, rule.LAG, rule.ENTRY_K))
+        rng = np.random.default_rng(7)
+        gray = rng.integers(0, 256, (50, 90, 160), dtype=np.uint8)
+        col_expected = rule.predict_collision(gray, gray=True)
+        col_actual = self.sub._s2_predict_collision(gray)
+        self.assertEqual(col_expected, col_actual)
+        self.assertEqual(rule.predict_entry(col_expected), self.sub._s2_predict_entry(col_actual))
+        # scores agree elementwise so any downstream argmax matches, not just this seed
+        series = rule.motion_series(gray)
+        self.assertTrue(np.allclose(rule.collision_score(series),
+                                    self.sub._s2_collision_score(self.sub._s2_motion_series(gray))))
+
 
 class ModelShapeTests(unittest.TestCase):
     def test_stage1_head_is_two_class(self):

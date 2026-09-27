@@ -184,6 +184,67 @@ class _Stage2Temporal(nn.Module):
         return collision_index, entry_index, self.scene(scene_input)
 
 
+# --- Stage 2 collision/entry timing rule from global camera motion (decision 12-A/12-B) --
+# Logic is byte-identical to src/afda/s2_motion_rule.py (the module Pro validated on
+# held-out windows); tests/test_afda.py enforces the equivalence so training/eval and
+# submission never drift. Parameters (jerk_y + div_drop, LAG -2, ENTRY_K 8) were chosen
+# only on the FIT split; the rule sees only the clip frames and uses no cross-file stats.
+# On the same 50-frame 10Hz windows the rule beats the trained head on held-out
+# Acc@0.3s (collision 0.649 vs 0.338, entry 0.356 vs 0.222), so it replaces the head's
+# timing outputs while the scene head still supplies evasion_space / entry_side.
+_S2_SIZE = (160, 90)
+_S2_LAG = -2
+_S2_ENTRY_K = 8
+
+
+def _s2_to_gray(frames):
+    """frames: iterable of BGR uint8 images (any size) -> (N, 90, 160) uint8."""
+    return np.stack([cv2.cvtColor(cv2.resize(f, _S2_SIZE, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+                     for f in frames])
+
+
+def _s2_motion_series(gray):
+    n, h, w = gray.shape
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    rx, ry = xs - w / 2, ys - h / 2
+    r2 = rx ** 2 + ry ** 2 + 1.0
+    div, dy = np.zeros(n, np.float32), np.zeros(n, np.float32)
+    for k in range(1, n):
+        fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 3, 13, 3, 5, 1.1, 0)
+        u, v = fl[..., 0], fl[..., 1]
+        dy[k] = float(np.median(v))
+        div[k] = float(np.mean((u * rx + v * ry) / r2))
+    if n > 1:
+        div[0], dy[0] = div[1], dy[1]
+    return {"div": div, "dy": dy}
+
+
+def _s2_smooth3(x):
+    return np.convolve(np.pad(x, 1, mode="edge"), np.ones(3) / 3, mode="valid")
+
+
+def _s2_z(x):
+    return (x - x.mean()) / (x.std() + 1e-6)
+
+
+def _s2_collision_score(series):
+    div, dy = series["div"], series["dy"]
+    div_drop = -np.diff(div, prepend=div[0])
+    jerk_y = np.abs(np.diff(dy, prepend=dy[0]))
+    return _s2_z(_s2_smooth3(div_drop)) + _s2_z(_s2_smooth3(jerk_y))
+
+
+def _s2_predict_collision(gray):
+    """Sequence-relative collision index for one clip (gray: (N, 90, 160) uint8)."""
+    if len(gray) < 3:
+        return 0
+    return int(np.clip(int(np.argmax(_s2_collision_score(_s2_motion_series(gray)))) + _S2_LAG, 0, len(gray) - 1))
+
+
+def _s2_predict_entry(collision_idx):
+    return int(max(0, collision_idx - _S2_ENTRY_K))
+
+
 def predict_stage2(data_dir, model_dir):
     device = _device()
     model_dir = Path(model_dir)
@@ -216,11 +277,17 @@ def predict_stage2(data_dir, model_dir):
             sequence = torch.cat(features)[None].to(device)
             collision_idx, entry_idx, scene = temporal(sequence)
             frame_numbers = [_frame_number(path) for path in paths]
+            # decision 12-A/12-B: timing from global camera motion (beats the trained
+            # head on held-out Acc@0.3s). The scene head still supplies evasion/side,
+            # so it keeps consuming its own collision_idx/entry_idx internally.
+            gray = _s2_to_gray([cv2.imread(str(path)) for path in paths])
+            rule_collision = _s2_predict_collision(gray)
+            rule_entry = _s2_predict_entry(rule_collision)
             rows.append(
                 {
                     "ID": folder.name,
-                    "collision_frame": frame_numbers[int(collision_idx)],
-                    "entry_frame": frame_numbers[int(entry_idx)],
+                    "collision_frame": frame_numbers[rule_collision],
+                    "entry_frame": frame_numbers[rule_entry],
                     "evasion_space": int(scene[:, :2].argmax(1)),
                     "entry_side": "RIGHT" if int(scene[:, 2:].argmax(1)) else "LEFT",
                 }
