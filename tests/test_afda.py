@@ -98,6 +98,21 @@ class PreprocessEquivalenceTests(unittest.TestCase):
         self.assertTrue(np.allclose(rule.collision_score(series),
                                     self.sub._s2_collision_score(self.sub._s2_motion_series(gray))))
 
+    def test_stage3_yaw_steer_matches(self):
+        # decision 92483f83 / 12-D: the inlined steering rule must stay byte-identical
+        # to the module Pro validated on the comma TRAIN split.
+        from afda import s3_yaw_steer as rule
+        self.assertEqual((self.sub._S3_W, self.sub._S3_H, self.sub._S3_SMOOTH_W,
+                          self.sub._S3_T_LO, self.sub._S3_T_HI, self.sub._S3_FAR),
+                         (rule.W, rule.H, rule.SMOOTH_W, rule.T_LO, rule.T_HI, rule._FAR))
+        rng = np.random.default_rng(11)
+        gray = rng.integers(0, 256, (40, 120, 160), dtype=np.uint8)
+        expected = rule.predict_steer(gray, gray=True)
+        actual = self.sub._s3_predict_steer(gray)
+        self.assertTrue(np.array_equal(expected, actual))
+        # yaw series agrees elementwise so any downstream threshold decision matches
+        self.assertTrue(np.allclose(rule.yaw_series(gray), self.sub._s3_yaw_series(gray)))
+
 
 class ModelShapeTests(unittest.TestCase):
     def test_stage1_head_is_two_class(self):

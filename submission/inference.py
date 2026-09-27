@@ -354,13 +354,63 @@ def _accel_from_speed(speeds, rule):
     return labels
 
 
+# --- Stage 3 steering class from the image yaw proxy (decision 92483f83 / 12-D) --------
+# Logic is byte-identical to src/afda/s3_yaw_steer.py (the module Pro validated on the
+# comma TRAIN split); tests/test_afda.py enforces the equivalence so training/eval and
+# submission never drift. yaw_far = median horizontal far-band flow (horizon region,
+# dominated by ego rotation): yaw_far > 0 = LEFT. The private S3 input is 10 Hz with one
+# decoded frame per sample_index (official notice, Pro qa 55c7cdc5), so consecutive
+# decoded frames ARE 10 Hz steps -- no fps normalization (container fps ~480 is wrong).
+# Thresholds are pixels at 160 px width and hold for the comma-format FOV. On the same
+# rows the rule lifts steer Macro-F1 0.324 -> 0.719 over the e005 head, so it replaces
+# the trained steer output; the accel head still comes from the model.
+_S3_W, _S3_H = 160, 120
+_S3_SMOOTH_W = 9
+_S3_T_LO = -0.3031277992659145
+_S3_T_HI = 0.19773931497501007
+_S3_FAR = slice(int(np.ceil(0.25 * _S3_H)), int(np.ceil(0.47 * _S3_H)))
+
+
+def _s3_yaw_series(gray):
+    n = len(gray)
+    out = np.zeros(n, np.float64)
+    for k in range(1, n):
+        fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 4, 15, 3, 5, 1.1, 0)
+        out[k] = float(np.median(fl[_S3_FAR, :, 0]))
+    if n > 1:
+        out[0] = out[1]
+    return out
+
+
+def _s3_smooth(x, w=_S3_SMOOTH_W):
+    x = np.asarray(x, np.float64)
+    h = w // 2
+    return np.array([x[max(0, i - h):i + h + 1].mean() for i in range(len(x))])
+
+
+def _s3_classify(yaw):
+    s = _s3_smooth(yaw)
+    return np.where(s > _S3_T_HI, "LEFT", np.where(s < _S3_T_LO, "RIGHT", "STRAIGHT"))
+
+
+def _s3_predict_steer(gray):
+    """gray: (N, 120, 160) uint8 at 10 Hz -> array of LEFT/STRAIGHT/RIGHT per frame."""
+    g = np.asarray(gray)
+    if len(g) < 2:
+        return np.array(["STRAIGHT"] * len(g))
+    return _s3_classify(_s3_yaw_series(g))
+
+
 def _stage3_frames(path: Path):
     capture = cv2.VideoCapture(str(path))
-    frames = []
+    frames, gray = [], []
     while True:
         ok, bgr = capture.read()
         if not ok:
             break
+        # yaw proxy: full-frame gray at 160x120, byte-identical to s3_yaw_steer.to_gray.
+        gray.append(cv2.resize(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), (_S3_W, _S3_H),
+                               interpolation=cv2.INTER_AREA))
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(rgb)
         width, height = image.size
@@ -373,7 +423,7 @@ def _stage3_frames(path: Path):
     capture.release()
     if not frames:
         raise ValueError(f"cannot decode video: {path.name}")
-    return torch.stack(frames)
+    return torch.stack(frames), np.stack(gray)
 
 
 def predict_stage3(data_dir, model_dir):
@@ -398,10 +448,10 @@ def predict_stage3(data_dir, model_dir):
     rows = []
     with torch.inference_mode():
         for path in videos:
-            frames = _stage3_frames(path)
+            frames, gray = _stage3_frames(path)
             count = len(frames)
             centers = np.arange(count)
-            head_predictions, steer_predictions, stopped_predictions = [], [], []
+            head_predictions, stopped_predictions = [], []
             for start in range(0, count, 8):
                 center = centers[start : start + 8]
                 indices = np.clip(center[:, None] - 8 + np.arange(16)[None, :], 0, count - 1)
@@ -409,12 +459,11 @@ def predict_stage3(data_dir, model_dir):
                 clips = (clips - S3_MEAN[None, :, None, :, :]) / S3_STD[None, :, None, :, :]
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     out = model(clips.to(device, non_blocking=True))
-                head_logits, steer_logits = out[0], out[1]
+                head_logits = out[0]
                 if predict_speed:
                     head_predictions.extend(head_logits.squeeze(-1).float().cpu().tolist())
                 else:
                     head_predictions.extend(head_logits.argmax(1).cpu().tolist())
-                steer_predictions.extend(steer_logits.argmax(1).cpu().tolist())
                 if predict_stopped:
                     stopped_predictions.extend(torch.sigmoid(out[2].squeeze(-1).float()).cpu().tolist())
             if predict_speed:
@@ -427,13 +476,16 @@ def predict_stage3(data_dir, model_dir):
                     "STOPPED" if p >= stopped_threshold else a
                     for p, a in zip(stopped_predictions, accel_labels)
                 ]
-            for sample_index, (accel_label, steer) in enumerate(zip(accel_labels, steer_predictions)):
+            # decision 92483f83 / 12-D: steer from the yaw proxy (consecutive 10 Hz
+            # decoded frames) replaces the trained steer head; accel stays from e005.
+            steer_labels = _s3_predict_steer(gray)
+            for sample_index, (accel_label, steer_label) in enumerate(zip(accel_labels, steer_labels)):
                 rows.append(
                     {
                         "ID": path.stem,
                         "sample_index": sample_index,
                         "accel_label": accel_label,
-                        "steer_label": STEER[steer],
+                        "steer_label": steer_label,
                     }
                 )
     del model
