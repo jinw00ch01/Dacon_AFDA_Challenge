@@ -150,6 +150,128 @@ def macro_f1(t, p):
     return afda_metrics.macro_f1(list(t), list(p), labels=[0, 1])
 
 
+def auroc(y, s):
+    """Rank AUROC with tie=0.5 (Mann-Whitney), n small so O(n^2) is fine."""
+    pos = [si for yi, si in zip(y, s) if int(yi) == 1]
+    neg = [si for yi, si in zip(y, s) if int(yi) == 0]
+    if not pos or not neg:
+        return float("nan")
+    wins = 0.0
+    for a in pos:
+        for b in neg:
+            wins += 1.0 if a > b else (0.5 if a == b else 0.0)
+    return wins / (len(pos) * len(neg))
+
+
+def shuffle_side(train_items, rng):
+    """Copy train_items and permute only the side labels among side-labelled ones."""
+    out = [dict(it) for it in train_items]
+    idx = [i for i, it in enumerate(out) if it["side"] is not None]
+    vals = [out[i]["side"] for i in idx]
+    perm = rng.permutation(len(vals))
+    for k, i in enumerate(idx):
+        out[i]["side"] = int(vals[perm[k]])
+    return out
+
+
+def _fold_train_items(items, scene_ids, fold_of, f):
+    held_ids = set(vid for vid in scene_ids if fold_of[vid] == f)
+    held = [items_by for items_by in items if items_by["video_id"] in held_ids]
+    train_items = [it for it in items if it["video_id"] not in held_ids
+                   and any(it[k] is not None for k in ("collision", "entry", "evasion", "side"))]
+    return held, train_items
+
+
+def run_side_diag(items, by_id, fold_of, scene_ids, args, device, amp):
+    """decision 8c33234b review (packet 1610e119): side OOF AUROC 0.233 is a
+    significant inversion, not chance. Distinguish a structural left/right bug
+    (in v001's live e001 side head) from a small-sample CV artifact via two
+    controls with the identical recipe:
+      (1) label-shuffle null: shuffle only train-fold side labels, N seeds.
+          If real 0.233 sits far below a ~0.5-centred shuffle distribution ->
+          structural inversion. If shuffle often <= 0.233 -> small-sample artifact.
+      (2) resubstitution: same fold model predicts its OWN train videos ->
+          train AUROC. Train forward (>0.5) but held-out inverted => video
+          similarity clustered opposite to labels; inspect left/right handling.
+    """
+    diag_rows = []
+    train_aurocs = []
+    for f in range(args.folds):
+        held, train_items = _fold_train_items(items, scene_ids, fold_of, f)
+        model = train_fold(train_items, args.epochs, args.lr, args.wd, args.grad_accum,
+                           args.seed, device, amp)
+        for r in predict_oof(model, held, device, amp):
+            if r["head"] == "side":
+                r.update(model="real", fold=f, split="oof"); diag_rows.append(r)
+        tr_items = [it for it in train_items if it["side"] is not None]
+        tr_rows = [r for r in predict_oof(model, tr_items, device, amp) if r["head"] == "side"]
+        for r in tr_rows:
+            r.update(model="real", fold=f, split="train"); diag_rows.append(r)
+        ta = auroc([r["true"] for r in tr_rows], [r["prob"] for r in tr_rows])
+        train_aurocs.append(ta)
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        print(f"[real] fold {f}: held={len(held)} train={len(train_items)} "
+              f"train_side_auroc={ta:.3f}", flush=True)
+
+    roof = [r for r in diag_rows if r["model"] == "real" and r["split"] == "oof"]
+    real_oof_auroc = auroc([r["true"] for r in roof], [r["prob"] for r in roof])
+
+    shuffle_aurocs = []
+    for s in range(args.shuffle_seeds):
+        rng = np.random.RandomState(args.seed + 100 + s)
+        soof = []
+        for f in range(args.folds):
+            held, train_items = _fold_train_items(items, scene_ids, fold_of, f)
+            sh = shuffle_side(train_items, rng)
+            model = train_fold(sh, args.epochs, args.lr, args.wd, args.grad_accum,
+                               args.seed, device, amp)
+            for r in predict_oof(model, held, device, amp):
+                if r["head"] == "side":
+                    r.update(model=f"shuffle_s{s}", fold=f, split="oof")
+                    diag_rows.append(r); soof.append(r)
+            del model
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+        a = auroc([r["true"] for r in soof], [r["prob"] for r in soof])
+        shuffle_aurocs.append(a)
+        print(f"[shuffle s{s}] oof_side_auroc={a:.3f}", flush=True)
+
+    sh = np.array([a for a in shuffle_aurocs if a == a])  # drop nan
+    n_le = int(sum(1 for a in shuffle_aurocs if a <= real_oof_auroc))
+    tr = np.array([a for a in train_aurocs if a == a])
+    out = {
+        "purpose": "side-head inversion diagnosis (review 1610e119, decision 8c33234b)",
+        "real_oof_side_auroc": real_oof_auroc,
+        "real_train_side_auroc_by_fold": train_aurocs,
+        "real_train_side_auroc_mean": float(tr.mean()) if len(tr) else float("nan"),
+        "shuffle_oof_side_auroc": shuffle_aurocs,
+        "shuffle_mean": float(sh.mean()) if len(sh) else float("nan"),
+        "shuffle_min": float(sh.min()) if len(sh) else float("nan"),
+        "shuffle_max": float(sh.max()) if len(sh) else float("nan"),
+        "shuffle_seeds": args.shuffle_seeds,
+        "n_shuffle_le_real": n_le,
+        "epochs": args.epochs, "folds": args.folds, "seed": args.seed,
+        "label_source": "agent+human v7 proxy (NOT official GT); LB S2 final arbiter",
+        "reading": ("structural inversion if real_oof << shuffle distribution AND "
+                    "real_train > 0.5; small-sample artifact if shuffle often <= real. "
+                    "Verdict deferred to Pro independent recompute + decision."),
+    }
+    args.out_json.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = args.out_json.with_name("side_diag_oof.csv")
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["model", "head", "video_id", "fold", "true", "pred", "prob", "split"])
+        w.writeheader()
+        for r in diag_rows:
+            w.writerow({k: r[k] for k in w.fieldnames})
+    args.out_json.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    print(f"SIDE_DIAG: real_oof={real_oof_auroc:.3f} train_mean={out['real_train_side_auroc_mean']:.3f} "
+          f"shuffle={[round(a,3) for a in shuffle_aurocs]} n_shuffle_le_real={n_le}", flush=True)
+    print(f"wrote {csv_path} and {args.out_json}", flush=True)
+    return 0
+
+
 def gate_for_head(rows, head, seed):
     """Compute the 4 gate conditions for one head from its OOF rows."""
     hr = [r for r in rows if r["head"] == head]
@@ -203,6 +325,9 @@ def main() -> int:
     ap.add_argument("--model-tag", default="e006cv")
     ap.add_argument("--out-csv", type=Path, default=ROOT / "work/s2_scene_cv/oof.csv")
     ap.add_argument("--out-json", type=Path, default=ROOT / "work/s2_scene_cv/report.json")
+    ap.add_argument("--side-diag", action="store_true",
+                    help="run side-head inversion diagnostic (label-shuffle + resubstitution) instead of the gate")
+    ap.add_argument("--shuffle-seeds", type=int, default=5)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -210,6 +335,13 @@ def main() -> int:
     items = load_cache(args.cache, "train", None) + load_cache(args.cache, "validation", None)
     by_id = {it["video_id"]: it for it in items}
     fold_of, scene_ids = build_folds(items, args.folds, args.seed)
+
+    if args.side_diag:
+        n_sd = sum(1 for it in items if it["side"] is not None)
+        print(f"SIDE-DIAG cache={args.cache.name} scene_videos={len(scene_ids)} side={n_sd} "
+              f"folds={args.folds} epochs={args.epochs} shuffle_seeds={args.shuffle_seeds} "
+              f"device={device}", flush=True)
+        return run_side_diag(items, by_id, fold_of, scene_ids, args, device, amp)
     n_ev = sum(1 for it in items if it["evasion"] is not None)
     n_sd = sum(1 for it in items if it["side"] is not None)
     print(f"cache={args.cache.name} total={len(items)} scene_videos={len(scene_ids)} "
