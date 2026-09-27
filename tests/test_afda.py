@@ -98,6 +98,22 @@ class PreprocessEquivalenceTests(unittest.TestCase):
         self.assertTrue(np.allclose(rule.collision_score(series),
                                     self.sub._s2_collision_score(self.sub._s2_motion_series(gray))))
 
+    def test_stage2_scene_evasion_matches(self):
+        # decision 12-C: the inlined evasion-space rule must stay byte-identical to
+        # the module Pro validated on held-out windows (4-condition gate passed).
+        from afda import s2_scene_rule as rule
+        self.assertEqual((self.sub._S2_POOL, self.sub._S2_EVASION_L,
+                          self.sub._S2_EVASION_THR, self.sub._S2_EVASION_FALLBACK),
+                         (rule.POOL, rule.EVASION_L, rule.EVASION_THR, rule.EVASION_FALLBACK))
+        rng = np.random.default_rng(13)
+        gray = rng.integers(0, 256, (50, 90, 160), dtype=np.uint8)
+        for c in (0, 3, 12, 30, 49):
+            self.assertEqual(rule.predict_evasion(gray, c), self.sub._s2_predict_evasion(gray, c))
+        # feature agrees elementwise so any downstream threshold decision matches
+        feat_expected = rule.evasion_feature(gray, 30)
+        feat_actual = self.sub._s2_evasion_feature(gray, 30)
+        self.assertTrue(np.isclose(feat_expected, feat_actual))
+
     def test_stage3_yaw_steer_matches(self):
         # decision 92483f83 / 12-D: the inlined steering rule must stay byte-identical
         # to the module Pro validated on the comma TRAIN split.

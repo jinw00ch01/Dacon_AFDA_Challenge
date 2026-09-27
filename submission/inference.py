@@ -245,6 +245,52 @@ def _s2_predict_entry(collision_idx):
     return int(max(0, collision_idx - _S2_ENTRY_K))
 
 
+# --- Stage 2 evasion-space rule from object motion (decision 12-C, Pro qa) --
+# Logic is byte-identical to src/afda/s2_scene_rule.py (the module Pro validated on
+# held-out windows; 4-condition pre-registered gate passed). tests/test_afda.py
+# enforces the equivalence. On the same 50-frame 10Hz windows the rule beats the
+# trained scene head on held-out evasion Macro-F1 (0.697 vs 0.351; the head collapses
+# to one class), so it replaces evasion_space. entry_side stays the trained head
+# (the side rule was REJECTED, decision 37c252d7). c is the rule collision index,
+# exactly as Pro evaluated it. EVASION_THR was chosen on the FIT split only.
+_S2_POOL = 10
+_S2_EVASION_L = 5
+_S2_EVASION_THR = 1.721142750989563
+_S2_EVASION_FALLBACK = 1
+
+
+def _s2_pool(x):
+    h, w = x.shape
+    return x.reshape(h // _S2_POOL, _S2_POOL, w // _S2_POOL, _S2_POOL).mean((1, 3))
+
+
+def _s2_scene_flow(gray, k):
+    """pooled (u, v) of the flow into window frame k (k >= 1), float16-quantised."""
+    fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 3, 13, 3, 5, 1.1, 0)
+    return (_s2_pool(fl[..., 0]).astype(np.float16).astype(np.float64),
+            _s2_pool(fl[..., 1]).astype(np.float16).astype(np.float64))
+
+
+def _s2_scene_frames(c, lo, hi, n):
+    return list(range(max(1, c + lo), min(n - 1, c + hi) + 1))
+
+
+def _s2_evasion_feature(gray, c):
+    ks = _s2_scene_frames(c, -_S2_EVASION_L, -1, len(gray))
+    if not ks:
+        return None
+    mags = []
+    for k in ks:
+        u, v = _s2_scene_flow(gray, k)
+        mags.append(float(np.mean(np.hypot(u[4:], v[4:]))))
+    return float(np.mean(mags))
+
+
+def _s2_predict_evasion(gray, collision_idx):
+    x = _s2_evasion_feature(np.asarray(gray), int(collision_idx))
+    return _S2_EVASION_FALLBACK if x is None else int(x <= _S2_EVASION_THR)
+
+
 def predict_stage2(data_dir, model_dir):
     device = _device()
     model_dir = Path(model_dir)
@@ -278,8 +324,9 @@ def predict_stage2(data_dir, model_dir):
             collision_idx, entry_idx, scene = temporal(sequence)
             frame_numbers = [_frame_number(path) for path in paths]
             # decision 12-A/12-B: timing from global camera motion (beats the trained
-            # head on held-out Acc@0.3s). The scene head still supplies evasion/side,
-            # so it keeps consuming its own collision_idx/entry_idx internally.
+            # head on held-out Acc@0.3s). decision 12-C: evasion_space from object
+            # motion (beats the head's collapsed evasion output). The scene head now
+            # only supplies entry_side; it still consumes its own indices internally.
             gray = _s2_to_gray([cv2.imread(str(path)) for path in paths])
             rule_collision = _s2_predict_collision(gray)
             rule_entry = _s2_predict_entry(rule_collision)
@@ -288,7 +335,7 @@ def predict_stage2(data_dir, model_dir):
                     "ID": folder.name,
                     "collision_frame": frame_numbers[rule_collision],
                     "entry_frame": frame_numbers[rule_entry],
-                    "evasion_space": int(scene[:, :2].argmax(1)),
+                    "evasion_space": _s2_predict_evasion(gray, rule_collision),
                     "entry_side": "RIGHT" if int(scene[:, 2:].argmax(1)) else "LEFT",
                 }
             )
