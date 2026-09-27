@@ -134,7 +134,11 @@ def main() -> int:
                 if max(idx) >= T:
                     raise IndexError(f"{vid} win {r.win}: frame {max(idx)} >= decoded {T}")
                 seq = feats[idx][None].to(device)  # (1, 50, 512)
-                col, ent, _ = temporal(seq)
+                col, ent, scene = temporal(seq)
+                # scene head decoded byte-identically to submission/inference.py:
+                # evasion_space = argmax(scene[:, :2]); entry_side = RIGHT if argmax(scene[:, 2:]) else LEFT.
+                e001_evasion = int(scene[:, :2].argmax(1).item())
+                e001_side = "RIGHT" if int(scene[:, 2:].argmax(1).item()) else "LEFT"
                 rows.append({
                     "video_id": vid, "win": int(r.win), "group": r.group, "src": src,
                     "e001_clean": int(r.e001_clean), "label_source": r.label_source,
@@ -142,6 +146,7 @@ def main() -> int:
                     "gt_entry": (None if pd.isna(r.gt_entry) else int(r.gt_entry)),
                     "pred_pair": int(r.pred_pair),
                     "e001_collision": int(col.item()), "e001_entry": int(ent.item()),
+                    "e001_evasion_space": e001_evasion, "e001_entry_side": e001_side,
                 })
         print(f"[{n}/{len(per_video)}] {vid} src={src} T={T} wins={len(g)} "
               f"({time.time()-t0:.0f}s)", flush=True)
