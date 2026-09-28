@@ -39,7 +39,15 @@ from afda.models import build_stage1_model  # noqa: E402
 from afda.preprocess import clip_frame_ids, decode_stage1_clip  # noqa: E402
 
 # class 1 == RERECORDED (submission/inference.py thresholds softmax[:,1] >= 0.5)
-LABEL_TO_CLASS = {"original": 0, "recapture_synthetic": 1}
+# Synthetic releases (v1/v1s/v1c) tag clips ``original``/``recapture_synthetic``;
+# the real format-matched release (s1_s23_format_matched_v1) uses the eval-server
+# wording ``ORIGINAL``/``RERECORDED``. Both map to the same 2 classes.
+LABEL_TO_CLASS = {
+    "original": 0,
+    "recapture_synthetic": 1,
+    "ORIGINAL": 0,
+    "RERECORDED": 1,
+}
 CLASSES = ["ORIGINAL", "RERECORDED"]
 
 DEFAULTS = {
