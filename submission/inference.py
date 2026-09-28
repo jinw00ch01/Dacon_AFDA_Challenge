@@ -197,26 +197,61 @@ class _Stage2Temporal(nn.Module):
 _S2_SIZE = (160, 90)
 _S2_LAG = -2
 _S2_ENTRY_K = 8
+# imread/resize/cvtColor and Farneback all release the GIL, so a thread pool cuts
+# the Stage 2 wall-clock ~linearly while keeping every result byte-identical to the
+# serial path (the +35 min the S2 rule added on the LB was this serial re-decode).
+_S2_WORKERS = max(1, min(8, os.cpu_count() or 1))
+
+
+def _s2_frame_to_gray(frame):
+    """One BGR uint8 image (any size) -> (90, 160) uint8. Shared by the two loaders
+    below so their output stays byte-for-byte identical."""
+    return cv2.cvtColor(cv2.resize(frame, _S2_SIZE, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
 
 
 def _s2_to_gray(frames):
     """frames: iterable of BGR uint8 images (any size) -> (N, 90, 160) uint8."""
-    return np.stack([cv2.cvtColor(cv2.resize(f, _S2_SIZE, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
-                     for f in frames])
+    return np.stack([_s2_frame_to_gray(f) for f in frames])
+
+
+def _s2_gray_from_paths(paths):
+    """Decode + resize + gray each frame in parallel; byte-identical to
+    _s2_to_gray([cv2.imread(str(p)) for p in paths]) but without a serial
+    full-resolution re-decode of every frame in the main process."""
+    def _load(path):
+        return _s2_frame_to_gray(cv2.imread(str(path)))
+
+    workers = min(_S2_WORKERS, len(paths))
+    if workers <= 1:
+        return np.stack([_load(p) for p in paths])
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return np.stack(list(pool.map(_load, paths)))
 
 
 def _s2_motion_series(gray):
+    """gray: (N, H, W) uint8 -> dict of (N,) float32 arrays for div and dy; index 0
+    copies index 1. Frame pairs are independent, so the thread pool gives a result
+    byte-identical to the serial loop."""
     n, h, w = gray.shape
     ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
     rx, ry = xs - w / 2, ys - h / 2
     r2 = rx ** 2 + ry ** 2 + 1.0
     div, dy = np.zeros(n, np.float32), np.zeros(n, np.float32)
-    for k in range(1, n):
+
+    def _step(k):
         fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 3, 13, 3, 5, 1.1, 0)
         u, v = fl[..., 0], fl[..., 1]
-        dy[k] = float(np.median(v))
-        div[k] = float(np.mean((u * rx + v * ry) / r2))
+        return k, float(np.median(v)), float(np.mean((u * rx + v * ry) / r2))
+
     if n > 1:
+        workers = min(_S2_WORKERS, n - 1)
+        if workers <= 1:
+            for k in range(1, n):
+                _, dy[k], div[k] = _step(k)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for k, dyk, divk in pool.map(_step, range(1, n)):
+                    dy[k], div[k] = dyk, divk
         div[0], dy[0] = div[1], dy[1]
     return {"div": div, "dy": dy}
 
@@ -329,7 +364,7 @@ def predict_stage2(data_dir, model_dir):
             # head on held-out Acc@0.3s). decision 12-C: evasion_space from object
             # motion (beats the head's collapsed evasion output). The scene head now
             # only supplies entry_side; it still consumes its own indices internally.
-            gray = _s2_to_gray([cv2.imread(str(path)) for path in paths])
+            gray = _s2_gray_from_paths(paths)
             rule_collision = _s2_predict_collision(gray)
             rule_entry = _s2_predict_entry(rule_collision)
             rows.append(

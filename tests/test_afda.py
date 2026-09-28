@@ -166,6 +166,48 @@ class PreprocessEquivalenceTests(unittest.TestCase):
         self.assertTrue(np.array_equal(parallel_motion, serial_motion))
         self.assertTrue(np.array_equal(parallel_yaw, serial_yaw))
 
+    def test_stage2_flow_thread_pool_byte_identical(self):
+        # The S2 rule input (per-frame decode+resize+gray) and its Farneback loop are
+        # thread-parallelised (imread/resize/cvtColor/Farneback all release the GIL) to
+        # cut the +35 min the serial re-decode added on the LB. The parallel result must
+        # be byte-identical to a forced-serial pass so the S2 score never moves.
+        self.assertGreater(self.sub._S2_WORKERS, 1)  # this host actually parallelises
+        rng = np.random.default_rng(29)
+        gray = rng.integers(0, 256, (50, 90, 160), dtype=np.uint8)
+        parallel = self.sub._s2_motion_series(gray)
+        original = self.sub._S2_WORKERS
+        try:
+            self.sub._S2_WORKERS = 1  # force the serial path
+            serial = self.sub._s2_motion_series(gray)
+        finally:
+            self.sub._S2_WORKERS = original
+        self.assertTrue(np.array_equal(parallel["div"], serial["div"]))
+        self.assertTrue(np.array_equal(parallel["dy"], serial["dy"]))
+
+    def test_stage2_gray_from_paths_matches_serial_imread(self):
+        # _s2_gray_from_paths must equal _s2_to_gray([cv2.imread(p) ...]) byte-for-byte,
+        # both in parallel and serial worker modes, so the rule input is unchanged.
+        import cv2
+        import tempfile
+        rng = np.random.default_rng(31)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i in range(12):
+                p = Path(tmp) / f"frame_{i:06d}.jpg"
+                img = rng.integers(0, 256, (200, 360, 3), dtype=np.uint8)
+                cv2.imwrite(str(p), img)
+                paths.append(p)
+            expected = self.sub._s2_to_gray([cv2.imread(str(p)) for p in paths])
+            parallel = self.sub._s2_gray_from_paths(paths)
+            original = self.sub._S2_WORKERS
+            try:
+                self.sub._S2_WORKERS = 1
+                serial = self.sub._s2_gray_from_paths(paths)
+            finally:
+                self.sub._S2_WORKERS = original
+        self.assertTrue(np.array_equal(expected, parallel))
+        self.assertTrue(np.array_equal(expected, serial))
+
 
 class ModelShapeTests(unittest.TestCase):
     def test_stage1_head_is_two_class(self):
