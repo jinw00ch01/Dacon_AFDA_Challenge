@@ -129,6 +129,24 @@ class PreprocessEquivalenceTests(unittest.TestCase):
         # yaw series agrees elementwise so any downstream threshold decision matches
         self.assertTrue(np.allclose(rule.yaw_series(gray), self.sub._s3_yaw_series(gray)))
 
+    def test_stage3_stopped_flow_matches(self):
+        # decision 12-D follow-up: the inlined STOPPED override must stay byte-identical
+        # to src/afda/s3_stopped_flow.py (chosen on the comma TRAIN split), and share the
+        # yaw column so steer output is unchanged.
+        from afda import s3_stopped_flow as rule
+        self.assertEqual((self.sub._S3_A_DIVFAR, self.sub._S3_B_MAGALL,
+                          self.sub._S3_SMOOTH_DIVFAR, self.sub._S3_SMOOTH_MAGALL),
+                         (rule.A_DIVFAR, rule.B_MAGALL, rule.SMOOTH_DIVFAR, rule.SMOOTH_MAGALL))
+        rng = np.random.default_rng(17)
+        gray = rng.integers(0, 256, (40, 120, 160), dtype=np.uint8)
+        motion = self.sub._s3_motion_series(gray)
+        self.assertTrue(np.allclose(rule.motion_series(gray), motion))
+        expected_mask = rule.predict_stopped(gray)
+        actual_mask = self.sub._s3_stopped_mask(motion[:, 1], motion[:, 2])
+        self.assertTrue(np.array_equal(expected_mask, actual_mask))
+        # col 0 stays byte-identical to the yaw series so the steer labels never drift
+        self.assertTrue(np.allclose(self.sub._s3_yaw_series(gray), motion[:, 0]))
+
 
 class ModelShapeTests(unittest.TestCase):
     def test_stage1_head_is_two_class(self):

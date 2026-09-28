@@ -416,6 +416,42 @@ _S3_SMOOTH_W = 9
 _S3_T_LO = -0.3031277992659145
 _S3_T_HI = 0.19773931497501007
 _S3_FAR = slice(int(np.ceil(0.25 * _S3_H)), int(np.ceil(0.47 * _S3_H)))
+# decision 12-D follow-up (Pro qa cc49dc89): STOPPED override from the SAME flow field.
+# Byte-identical to src/afda/s3_stopped_flow.py; tests/test_afda.py enforces the equivalence.
+# div_far = mean radial divergence in y in [0.30H, 0.50H) (FOE at (0.5W, 0.47H)); ~0 when the
+# car does not move forward. mag_all = median |flow| above the hood (y < 0.74H), a guard against
+# high-speed flow failure where div_far also collapses. A/B chosen on the comma TRAIN split only.
+_S3_A_DIVFAR = 0.18678625586132247
+_S3_B_MAGALL = 0.11957117766141878
+_S3_SMOOTH_DIVFAR = 15
+_S3_SMOOTH_MAGALL = 5
+_S3_yy, _S3_xx = np.mgrid[0:_S3_H, 0:_S3_W].astype(np.float32)
+_S3_rx, _S3_ry = _S3_xx - _S3_W / 2, _S3_yy - 0.47 * _S3_H
+_S3_r2 = _S3_rx ** 2 + _S3_ry ** 2 + 1.0
+_S3_FARB = (_S3_yy >= 0.30 * _S3_H) & (_S3_yy < 0.50 * _S3_H)
+_S3_ABOVE_HOOD = _S3_yy < 0.74 * _S3_H
+
+
+def _s3_step_values(flow):
+    """One 10 Hz Farneback flow (120, 160, 2) -> (yaw_far, div_far, mag_all)."""
+    u, v = flow[..., 0], flow[..., 1]
+    return (float(np.median(u[_S3_FAR])),
+            float(np.mean(((u * _S3_rx + v * _S3_ry) / _S3_r2)[_S3_FARB]) * _S3_W),
+            float(np.median(np.hypot(u, v)[_S3_ABOVE_HOOD])))
+
+
+def _s3_motion_series(gray):
+    """gray: (N, 120, 160) uint8 at 10 Hz -> (N, 3) [yaw_far, div_far, mag_all]; row 0 copies row 1.
+
+    One Farneback pass per step yields all three values shared by the steer and STOPPED rules."""
+    n = len(gray)
+    out = np.zeros((n, 3), np.float64)
+    for k in range(1, n):
+        fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 4, 15, 3, 5, 1.1, 0)
+        out[k] = _s3_step_values(fl)
+    if n > 1:
+        out[0] = out[1]
+    return out
 
 
 def _s3_yaw_series(gray):
@@ -438,6 +474,12 @@ def _s3_smooth(x, w=_S3_SMOOTH_W):
 def _s3_classify(yaw):
     s = _s3_smooth(yaw)
     return np.where(s > _S3_T_HI, "LEFT", np.where(s < _S3_T_LO, "RIGHT", "STRAIGHT"))
+
+
+def _s3_stopped_mask(div_far, mag_all):
+    """True where the image-motion rule says STOPPED (overrides the accel class)."""
+    return ((_s3_smooth(div_far, _S3_SMOOTH_DIVFAR) <= _S3_A_DIVFAR)
+            & (_s3_smooth(mag_all, _S3_SMOOTH_MAGALL) <= _S3_B_MAGALL))
 
 
 def _s3_predict_steer(gray):
@@ -525,7 +567,19 @@ def predict_stage3(data_dir, model_dir):
                 ]
             # decision 92483f83 / 12-D: steer from the yaw proxy (consecutive 10 Hz
             # decoded frames) replaces the trained steer head; accel stays from e005.
-            steer_labels = _s3_predict_steer(gray)
+            # One flow pass yields yaw_far (col 0), div_far (col 1), mag_all (col 2).
+            if len(gray) >= 2:
+                motion = _s3_motion_series(gray)
+                steer_labels = _s3_classify(motion[:, 0])
+                flow_stopped = _s3_stopped_mask(motion[:, 1], motion[:, 2])
+            else:
+                steer_labels = np.array(["STRAIGHT"] * len(gray))
+                flow_stopped = np.zeros(len(gray), bool)
+            # decision 12-D follow-up (Pro qa cc49dc89): OR the image-motion STOPPED rule
+            # onto the accel class from the same flow field (no extra Farneback pass).
+            accel_labels = [
+                "STOPPED" if s else a for s, a in zip(flow_stopped, accel_labels)
+            ]
             for sample_index, (accel_label, steer_label) in enumerate(zip(accel_labels, steer_labels)):
                 rows.append(
                     {
