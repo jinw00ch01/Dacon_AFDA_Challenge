@@ -17,7 +17,9 @@ Evaluation input layout (per the competition contract):
 """
 from __future__ import annotations
 
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -432,6 +434,16 @@ _S3_FARB = (_S3_yy >= 0.30 * _S3_H) & (_S3_yy < 0.50 * _S3_H)
 _S3_ABOVE_HOOD = _S3_yy < 0.74 * _S3_H
 
 
+# The per-frame Farneback pass dominates S3 runtime on the (CPU-only) evaluation
+# server: ~2.9 ms/pair x ~1200 frames x every private video. cv2 releases the GIL
+# during calcOpticalFlowFarneback, so running independent frame pairs on a thread
+# pool is byte-identical to the serial loop (each writes a distinct row) but scales
+# ~linearly with cores (measured 4x@4, 7x@8, 11x@16). This keeps the LB score fixed
+# while pulling total runtime back under the 40-min budget. tests/test_afda.py
+# asserts parallel == serial. Capped at 8 to bound thread overhead on any host.
+_S3_FLOW_WORKERS = max(1, min(8, os.cpu_count() or 1))
+
+
 def _s3_step_values(flow):
     """One 10 Hz Farneback flow (120, 160, 2) -> (yaw_far, div_far, mag_all)."""
     u, v = flow[..., 0], flow[..., 1]
@@ -443,25 +455,49 @@ def _s3_step_values(flow):
 def _s3_motion_series(gray):
     """gray: (N, 120, 160) uint8 at 10 Hz -> (N, 3) [yaw_far, div_far, mag_all]; row 0 copies row 1.
 
-    One Farneback pass per step yields all three values shared by the steer and STOPPED rules."""
+    One Farneback pass per step yields all three values shared by the steer and STOPPED rules.
+    Frame pairs are independent, so a thread pool (cv2 releases the GIL) gives a
+    byte-identical result to the serial loop while cutting wall-clock ~linearly."""
     n = len(gray)
     out = np.zeros((n, 3), np.float64)
-    for k in range(1, n):
+    if n < 2:
+        return out
+
+    def _step(k):
         fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 4, 15, 3, 5, 1.1, 0)
-        out[k] = _s3_step_values(fl)
-    if n > 1:
-        out[0] = out[1]
+        return k, _s3_step_values(fl)
+
+    workers = min(_S3_FLOW_WORKERS, n - 1)
+    if workers <= 1:
+        for k in range(1, n):
+            _, out[k] = _step(k)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for k, vals in pool.map(_step, range(1, n)):
+                out[k] = vals
+    out[0] = out[1]
     return out
 
 
 def _s3_yaw_series(gray):
     n = len(gray)
     out = np.zeros(n, np.float64)
-    for k in range(1, n):
+    if n < 2:
+        return out
+
+    def _step(k):
         fl = cv2.calcOpticalFlowFarneback(gray[k - 1], gray[k], None, 0.5, 4, 15, 3, 5, 1.1, 0)
-        out[k] = float(np.median(fl[_S3_FAR, :, 0]))
-    if n > 1:
-        out[0] = out[1]
+        return k, float(np.median(fl[_S3_FAR, :, 0]))
+
+    workers = min(_S3_FLOW_WORKERS, n - 1)
+    if workers <= 1:
+        for k in range(1, n):
+            _, out[k] = _step(k)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for k, val in pool.map(_step, range(1, n)):
+                out[k] = val
+    out[0] = out[1]
     return out
 
 

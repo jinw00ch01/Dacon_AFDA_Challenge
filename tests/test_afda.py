@@ -147,6 +147,25 @@ class PreprocessEquivalenceTests(unittest.TestCase):
         # col 0 stays byte-identical to the yaw series so the steer labels never drift
         self.assertTrue(np.allclose(self.sub._s3_yaw_series(gray), motion[:, 0]))
 
+    def test_stage3_flow_thread_pool_byte_identical(self):
+        # The Farneback loop is thread-parallelised (cv2 releases the GIL) to fit the
+        # runtime budget. Independent frame pairs -> the parallel result must be
+        # byte-identical to a forced-serial pass; the LB score must not move.
+        self.assertGreater(self.sub._S3_FLOW_WORKERS, 1)  # this host actually parallelises
+        rng = np.random.default_rng(23)
+        gray = rng.integers(0, 256, (30, 120, 160), dtype=np.uint8)
+        parallel_motion = self.sub._s3_motion_series(gray)
+        parallel_yaw = self.sub._s3_yaw_series(gray)
+        original = self.sub._S3_FLOW_WORKERS
+        try:
+            self.sub._S3_FLOW_WORKERS = 1  # force the serial path
+            serial_motion = self.sub._s3_motion_series(gray)
+            serial_yaw = self.sub._s3_yaw_series(gray)
+        finally:
+            self.sub._S3_FLOW_WORKERS = original
+        self.assertTrue(np.array_equal(parallel_motion, serial_motion))
+        self.assertTrue(np.array_equal(parallel_yaw, serial_yaw))
+
 
 class ModelShapeTests(unittest.TestCase):
     def test_stage1_head_is_two_class(self):
