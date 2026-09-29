@@ -1,5 +1,10 @@
 # AFDA — Claude Code 운영 규약
 
+> **대회 종료(2026-09-29):**
+> - 제출은 9/29 10:00 KST에 마감됐다. 두 PC의 에이전트 루프는 9/28 20:56에 멈춘 뒤 재개하지 않는다.
+> - 이 저장소는 이제 기록 보관용이다. 에이전트는 새 실험·제출·패킷 작업을 시작하지 않는다.
+> - 전체 과정은 [README.md](README.md), [docs/JOURNEY.md](docs/JOURNEY.md), [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md), [docs/records/](docs/records/)에 정리했다.
+
 @AGENTS.md
 
 위 AGENTS.md는 기본 규약이다. 아래 **2026-09-25 사용자 결정**이 AGENTS.md와 docs/의 Codex 전제 문구보다 우선한다.
